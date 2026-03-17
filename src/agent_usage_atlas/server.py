@@ -12,9 +12,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 import time
 
-from generate import build_dashboard_payload
-from template import build_html
-from parsers import CLAUDE_ROOT, CODEX_ROOTS, CURSOR_ROOT
+from .cli import build_dashboard_payload
+from .template import build_html
+from .parsers import CLAUDE_ROOT, CODEX_ROOTS, CURSOR_ROOT
 
 
 _PAYLOAD_CACHE: dict[tuple[int, str | None], tuple[dict, str, tuple[int, int, int]]] = {}
@@ -69,11 +69,21 @@ def _iter_payload_files():
             yield path
 
 
+_SIG_FILE_LIST: list[Path] = []
+_SIG_FILE_LIST_TIME: float = 0.0
+_SIG_RESCAN_INTERVAL: float = 30.0  # seconds between full rglob rescans
+
+
 def _payload_signature() -> tuple[int, int, int]:
+    global _SIG_FILE_LIST, _SIG_FILE_LIST_TIME
+    now = time.monotonic()
+    if not _SIG_FILE_LIST or (now - _SIG_FILE_LIST_TIME) > _SIG_RESCAN_INTERVAL:
+        _SIG_FILE_LIST = list(_iter_payload_files())
+        _SIG_FILE_LIST_TIME = now
     newest_mtime_ns = 0
     total_bytes = 0
     file_count = 0
-    for path in _iter_payload_files():
+    for path in _SIG_FILE_LIST:
         try:
             st = path.stat()
         except OSError:

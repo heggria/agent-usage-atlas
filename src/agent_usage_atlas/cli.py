@@ -4,22 +4,21 @@ from __future__ import annotations
 
 import argparse
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from aggregation import aggregate
-from models import fmt_int, fmt_usd
-from parsers import (
-    parse_claude_events,
-    parse_claude_session_meta,
-    parse_claude_tool_calls,
-    parse_codex_events,
-    parse_codex_session_meta,
-    parse_codex_tool_calls,
+from .aggregation import aggregate
+from .models import fmt_int, fmt_usd
+from .parsers import (
+    parse_codex_all,
+    parse_claude_all,
     parse_cursor_events,
+    parse_cursor_codegen,
+    parse_claude_stats_cache,
 )
-from template import build_html
+from .template import build_html
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -85,18 +84,32 @@ def build_dashboard_payload(
         )
     start_utc = start_local.astimezone(timezone.utc)
 
-    events = (
-        parse_codex_events(start_utc, now_utc)
-        + parse_claude_events(start_utc, now_utc)
-        + parse_cursor_events(start_utc, now_utc, local_tz)
-    )
-    tool_calls = parse_codex_tool_calls() + parse_claude_tool_calls()
-    session_metas = parse_codex_session_meta() + parse_claude_session_meta()
+    with ThreadPoolExecutor() as pool:
+        f_codex = pool.submit(parse_codex_all, start_utc, now_utc)
+        f_claude = pool.submit(parse_claude_all, start_utc, now_utc)
+        f_cursor = pool.submit(parse_cursor_events, start_utc, now_utc, local_tz)
+        f_cursor_cg = pool.submit(parse_cursor_codegen, start_utc, now_utc)
+        f_claude_stats = pool.submit(parse_claude_stats_cache)
+
+    codex_ev, codex_tc, codex_sm, codex_tasks, codex_durations = f_codex.result()
+    claude_ev, claude_tc, claude_sm, claude_durations = f_claude.result()
+    cursor_ev = f_cursor.result()
+    cursor_codegen, cursor_commits = f_cursor_cg.result()
+    claude_stats_cache = f_claude_stats.result()
+
+    events = codex_ev + claude_ev + cursor_ev
+    tool_calls = codex_tc + claude_tc
+    session_metas = codex_sm + claude_sm
+    task_events = codex_tasks
+    turn_durations = codex_durations + claude_durations
 
     # Aggregate & render
     dashboard = aggregate(
         events, tool_calls, session_metas,
         start_local=start_local, now_local=now_local, local_tz=local_tz,
+        task_events=task_events, turn_durations=turn_durations,
+        cursor_codegen=cursor_codegen, cursor_commits=cursor_commits,
+        claude_stats_cache=claude_stats_cache,
     )
     dashboard["_meta"] = {
         "generated_at": now_local.isoformat(timespec="seconds"),
@@ -122,7 +135,7 @@ def main() -> None:
     args = _build_parser().parse_args()
 
     if args.serve:
-        from server import run_server
+        from .server import run_server
 
         run_server(
             host=args.host,
@@ -138,7 +151,7 @@ def main() -> None:
         dashboard = build_dashboard_payload(days=args.days, since=args.since)
     except ValueError as exc:
         raise SystemExit(f"Invalid --since date format: {exc}") from exc
-    output_path = args.output or (Path(__file__).resolve().parent / "reports" / "dashboard.html")
+    output_path = args.output or (Path.cwd() / "reports" / "dashboard.html")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(build_html(dashboard))
 

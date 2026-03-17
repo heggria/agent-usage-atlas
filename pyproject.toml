@@ -7,8 +7,8 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = []
 
-[tool.setuptools]
-py-modules = ["generate", "models", "parsers", "aggregation", "template", "server"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.scripts]
-agent-usage-atlas = "generate:main"
+agent-usage-atlas = "agent_usage_atlas.cli:main"

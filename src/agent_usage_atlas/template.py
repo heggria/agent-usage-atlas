@@ -5,7 +5,7 @@ import json
 
 
 def build_html(data: dict | None = None, *, poll_interval_ms: int = 0) -> str:
-    payload = "null" if data is None else json.dumps(data, ensure_ascii=False)
+    payload = "null" if data is None else json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
     interval = max(1000, int(poll_interval_ms or 0))
     return _template().replace("__DATA__", payload).replace("__POLL_MS__", str(interval))
 
@@ -17,7 +17,8 @@ def _template() -> str:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Agent Usage Atlas</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6/css/all.min.css">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6/css/all.min.css" media="print" onload="this.media='all'">
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -67,8 +68,8 @@ body{
   border-radius:var(--radius);
   padding:24px;
   box-shadow:var(--shadow);
-  backdrop-filter:blur(22px);
 }
+.hero-wrap{backdrop-filter:blur(22px)}
 .hero-wrap{position:relative;overflow:hidden;padding:40px 36px}
 .hero-wrap::before{
   content:"";
@@ -79,6 +80,50 @@ body{
     linear-gradient(135deg, rgba(255,255,255,.02), transparent 55%);
   pointer-events:none;
 }
+/* ── Toast notification ── */
+.toast{
+  position:fixed;top:16px;left:50%;transform:translateX(-50%) translateY(-80px);
+  z-index:9999;padding:10px 22px;border-radius:999px;
+  font-size:12px;font-weight:600;letter-spacing:.02em;
+  color:#fff;pointer-events:none;opacity:0;
+  transition:transform .4s cubic-bezier(.16,1,.3,1), opacity .4s ease;
+  box-shadow:0 8px 32px rgba(0,0,0,.45);
+  display:flex;align-items:center;gap:8px;
+  backdrop-filter:blur(16px);
+}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.toast.ok{background:rgba(81,207,102,.18);border:1px solid rgba(81,207,102,.35);color:#a3e635}
+.toast.err{background:rgba(255,107,107,.18);border:1px solid rgba(255,107,107,.35);color:#ff6b6b}
+.toast.info{background:rgba(116,192,252,.15);border:1px solid rgba(116,192,252,.3);color:#74c0fc}
+.toast .spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.2);border-top-color:currentColor;border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Live badge ── */
+.live-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  margin-left:auto;padding:3px 10px;border-radius:999px;
+  font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  transition:background .3s,color .3s;
+}
+.live-badge.connected{background:rgba(81,207,102,.15);color:#51cf66}
+.live-badge.connected .dot{background:#51cf66;box-shadow:0 0 6px #51cf66}
+.live-badge.disconnected{background:rgba(255,107,107,.15);color:#ff6b6b}
+.live-badge.disconnected .dot{background:#ff6b6b}
+.live-badge.off{background:rgba(255,255,255,.06);color:var(--text-muted)}
+.live-badge.off .dot{background:var(--text-muted)}
+.dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.live-badge.connected .dot{animation:pulse-dot 2s ease-in-out infinite}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.35}}
+
+.range-tabs{display:flex;gap:4px;margin-top:10px}
+.range-tab{
+  padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;
+  cursor:pointer;border:1px solid rgba(255,255,255,.08);background:transparent;
+  color:var(--text-muted);transition:all .2s;user-select:none;letter-spacing:.02em;
+}
+.range-tab:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.range-tab.active{background:var(--accent);color:#000;border-color:var(--accent)}
+
 .eyebrow{
   display:flex;align-items:center;gap:8px;
   color:var(--accent);
@@ -191,10 +236,12 @@ tr:hover td{background:rgba(255,255,255,.02)}
 </style>
 </head>
 <body>
+<div class="toast" id="toast"></div>
 <main class="page">
   <section class="g g-wide">
     <article class="p hero-wrap">
-      <div class="eyebrow"><i class="fa-solid fa-chart-line"></i> Agent Usage Atlas</div>
+      <div class="eyebrow"><i class="fa-solid fa-chart-line"></i> Agent Usage Atlas<span class="live-badge off" id="live-badge"><span class="dot"></span>Static</span></div>
+      <div class="range-tabs" id="range-tabs"></div>
       <h1>三个 Agent 栈的联赛积分榜</h1>
       <p class="hero-copy" id="hero-copy"></p>
       <div class="chips" id="hero-chips"></div>
@@ -291,6 +338,20 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <article class="p"><div class="sh"><h2>Model Radar Comparison</h2><span>top 5 models on 5 axes</span></div><div class="chart sm" id="model-radar-chart"></div></article>
   </section>
 
+  <div class="divider"><i class="fa-solid fa-gauge-high"></i> Extended Analytics</div>
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2>响应时间分布</h2><span>Turn Duration Histogram</span></div><div class="chart sm" id="turn-dur-chart"></div></article>
+    <article class="p"><div class="sh"><h2>每日响应时间</h2><span>中位数趋势</span></div><div class="chart sm" id="daily-turn-dur-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>任务完成率</h2><span>Codex task started vs completed</span></div><div class="chart sm" id="task-rate-chart"></div></article>
+    <article class="p"><div class="sh"><h2>Cursor 代码生成 · 模型</h2><span>按模型的生成次数</span></div><div class="chart sm" id="codegen-model-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>Cursor 代码生成 · 趋势</h2><span>每日生成次数</span></div><div class="chart sm" id="codegen-daily-chart"></div></article>
+    <article class="p"><div class="sh"><h2>AI 代码贡献度</h2><span>AI vs Human lines in commits</span></div><div class="chart sm" id="ai-contribution-chart"></div></article>
+  </section>
+
   <div class="divider"><i class="fa-solid fa-list-ol"></i> Session Leaderboard</div>
   <section>
     <article class="p">
@@ -306,14 +367,42 @@ tr:hover td{background:rgba(255,255,255,.02)}
 <script>
 let data = __DATA__;
 const pageParams = new URLSearchParams(window.location.search);
-const dashboardRangeParams = new URLSearchParams();
-if (pageParams.get('days')) dashboardRangeParams.set('days', pageParams.get('days'));
-if (pageParams.get('since')) dashboardRangeParams.set('since', pageParams.get('since'));
-const dashboardApiUrl = '/api/dashboard' + (dashboardRangeParams.toString() ? `?${dashboardRangeParams.toString()}` : '');
-if (pageParams.get('interval')) {
-  dashboardRangeParams.set('interval', pageParams.get('interval'));
+const baseRangeParams = new URLSearchParams();
+if (pageParams.get('days')) baseRangeParams.set('days', pageParams.get('days'));
+if (pageParams.get('since')) baseRangeParams.set('since', pageParams.get('since'));
+const baseInterval = pageParams.get('interval');
+const defaultDays = Number(baseRangeParams.get('days')) || 30;
+const defaultSince = baseRangeParams.get('since') || null;
+
+/* Active range tab state */
+let activeRangeKey = 'all'; /* 'all' | 'today' */
+function _dateFmt(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-const dashboardStreamUrl = '/api/dashboard/stream' + (dashboardRangeParams.toString() ? `?${dashboardRangeParams.toString()}` : '');
+function _buildParams(rangeKey) {
+  const p = new URLSearchParams();
+  if (rangeKey === 'today') {
+    p.set('since', _dateFmt(new Date()));
+  } else if (rangeKey === 'week') {
+    p.set('days', '7');
+  } else {
+    if (defaultSince) p.set('since', defaultSince);
+    else p.set('days', String(defaultDays));
+  }
+  if (baseInterval) p.set('interval', baseInterval);
+  return p;
+}
+function _apiUrl(rangeKey) {
+  const p = _buildParams(rangeKey);
+  p.delete('interval');
+  return '/api/dashboard' + (p.toString() ? `?${p}` : '');
+}
+function _streamUrl(rangeKey) {
+  const p = _buildParams(rangeKey);
+  return '/api/dashboard/stream' + (p.toString() ? `?${p}` : '');
+}
+let dashboardApiUrl = _apiUrl('all');
+let dashboardStreamUrl = _streamUrl('all');
 const isLiveMode = data === null;
 let lastDashboardHash = '';
 let refreshTimer = null;
@@ -354,16 +443,69 @@ const TX = 'rgba(255,255,255,.68)';
 const AX = 'rgba(255,255,255,.06)';
 const BG = 'rgba(255,255,255,.03)';
 const getTokenSources = () => (data && data.source_cards ? data.source_cards.filter(card => card.token_capable) : []);
-const chartTheme = () => ({
+
+/* ── Number transition animation ── */
+let _numPrevValues = new WeakMap();
+/* Build a locked formatter that keeps the same decimal places / scale throughout animation */
+function _lockFmt(formatter, targetVal) {
+  const targetStr = formatter(targetVal);
+  if (formatter === fmtShort) {
+    const a = Math.abs(targetVal);
+    if (a >= 1e9) return v => (v / 1e9).toFixed(2) + 'B';
+    if (a >= 1e6) return v => (v / 1e6).toFixed(2) + 'M';
+    if (a >= 1e3) return v => (v / 1e3).toFixed(1) + 'K';
+    return v => String(Math.round(v));
+  }
+  if (formatter === fmtUSD) {
+    const av = Math.abs(targetVal);
+    if (av >= 1000) return v => '$' + v.toLocaleString('en-US', {maximumFractionDigits: 0});
+    if (av >= 100) return v => '$' + v.toFixed(1);
+    if (av >= 1) return v => '$' + v.toFixed(2);
+    if (av >= 0.01) return v => '$' + v.toFixed(3);
+    return v => '$' + v.toFixed(4);
+  }
+  if (formatter === fmtPct) {
+    return v => ((Number(v || 0) * 100).toFixed(1)) + '%';
+  }
+  if (formatter === fmtInt) {
+    return v => Math.round(v).toLocaleString('en-US');
+  }
+  return formatter;
+}
+function animateNum(el, newRaw, formatter) {
+  if (!el) return;
+  const newVal = Number(newRaw) || 0;
+  const oldVal = _numPrevValues.has(el) ? _numPrevValues.get(el) : newVal;
+  _numPrevValues.set(el, newVal);
+  if (isFirstRender || oldVal === newVal) {
+    el.textContent = formatter(newVal);
+    return;
+  }
+  const locked = _lockFmt(formatter, newVal);
+  const duration = 600;
+  const startTime = performance.now();
+  const step = (now) => {
+    const t = Math.min((now - startTime) / duration, 1);
+    const ease = 1 - Math.pow(1 - t, 3);
+    const cur = oldVal + (newVal - oldVal) * ease;
+    el.textContent = locked(cur);
+    if (t < 1) requestAnimationFrame(step);
+    else { _numPrevValues.set(el, newVal); el.textContent = formatter(newVal); }
+  };
+  requestAnimationFrame(step);
+}
+
+let isFirstRender = true;
+const THEME_BASE = {
   textStyle: {color: TX, fontFamily: 'Inter,-apple-system,PingFang SC,sans-serif'},
-  animationDuration: 700,
   tooltip: {
     backgroundColor: 'rgba(15,18,28,.92)',
     borderColor: 'rgba(255,255,255,.08)',
     borderWidth: 1,
     textStyle: {color: '#ece7df', fontSize: 12}
   }
-});
+};
+const chartTheme = () => ({...THEME_BASE, animationDuration: isFirstRender ? 700 : 0});
 const initChart = id => {
   if (chartCache[id]) {
     return chartCache[id];
@@ -380,22 +522,110 @@ function clearCharts(){
   Object.keys(chartCache).forEach(key => delete chartCache[key]);
 }
 
+/* ── Lazy chart rendering via IntersectionObserver ── */
+const lazyQueue = [];
+let lazyObserver = null;
+const lazyRendered = new Set();
+const lazyRenderFns = {};
+
+function registerLazy(chartId, renderFn) {
+  lazyRenderFns[chartId] = renderFn;
+  lazyQueue.push({chartId, renderFn});
+}
+
+function flushLazy() {
+  /* Re-render charts already visible (live-mode update) */
+  if (lazyRendered.size > 0) {
+    lazyRendered.forEach(id => {
+      const fn = lazyRenderFns[id];
+      if (fn) requestAnimationFrame(() => fn());
+    });
+    /* Observe any newly registered charts not yet seen */
+    if (lazyObserver) {
+      lazyQueue.forEach(item => {
+        if (lazyRendered.has(item.chartId)) return;
+        const el = document.getElementById(item.chartId);
+        if (el) lazyObserver.observe(el);
+      });
+    }
+    return;
+  }
+
+  /* First render: set up observer from scratch */
+  if (typeof IntersectionObserver === 'undefined') {
+    lazyQueue.forEach(item => item.renderFn());
+    lazyQueue.length = 0;
+    return;
+  }
+
+  if (lazyObserver) {
+    lazyObserver.disconnect();
+  }
+
+  lazyObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const id = entry.target.id;
+      if (lazyRendered.has(id)) return;
+      lazyRendered.add(id);
+      lazyObserver.unobserve(entry.target);
+      const fn = lazyRenderFns[id];
+      if (fn) {
+        requestAnimationFrame(() => fn());
+      }
+    });
+  }, {rootMargin: '200px 0px'});
+
+  lazyQueue.forEach(item => {
+    const el = document.getElementById(item.chartId);
+    if (el) lazyObserver.observe(el);
+  });
+}
+
 function setDashboard(nextData){
   if (!nextData || typeof nextData !== 'object') {
     return false;
   }
-  const hash = JSON.stringify(nextData);
+  const meta = nextData._meta;
+  const hash = meta ? meta.generated_at : '';
   if (!data) {
     data = nextData;
     lastDashboardHash = hash;
     return true;
   }
-  if (hash === lastDashboardHash) {
+  if (hash && hash === lastDashboardHash) {
     return false;
   }
   data = nextData;
   lastDashboardHash = hash;
   return true;
+}
+
+let toastTimer = null;
+function showToast(message, type = 'info', duration = 3000){
+  const el = document.getElementById('toast');
+  if (!el) return;
+  clearTimeout(toastTimer);
+  el.className = 'toast ' + type;
+  const icon = type === 'ok' ? '<i class="fa-solid fa-check"></i>'
+    : type === 'err' ? '<i class="fa-solid fa-xmark"></i>'
+    : '<span class="spinner"></span>';
+  el.innerHTML = icon + ' ' + message;
+  requestAnimationFrame(() => el.classList.add('show'));
+  if (duration > 0) {
+    toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+  }
+}
+
+function updateLiveBadge(state){
+  const badge = document.getElementById('live-badge');
+  if (!badge) return;
+  badge.className = 'live-badge ' + state;
+  badge.querySelector('.dot') || badge.insertAdjacentHTML('afterbegin','<span class="dot"></span>');
+  const label = state === 'connected' ? 'Live' : state === 'disconnected' ? 'Offline' : 'Static';
+  const spans = badge.childNodes;
+  if (spans.length > 1) spans[spans.length - 1].textContent = label;
+  else badge.appendChild(document.createTextNode(label));
 }
 
 function setStatus(message, isError = false){
@@ -406,11 +636,12 @@ function setStatus(message, isError = false){
       copy.textContent = message;
     }
   }
-  if (!isError) {
+  if (isError) {
+    showToast(message, 'err', 5000);
+    console.error(`[dashboard] ${message}`);
+  } else {
     console.debug(`[dashboard] ${message}`);
-    return;
   }
-  console.error(`[dashboard] ${message}`);
 }
 
 function buildDashboardUrl(){
@@ -420,8 +651,10 @@ function buildDashboardUrl(){
 function setStreamStatus(message, isError = false){
   if (isError) {
     isStreamConnected = false;
+    updateLiveBadge('disconnected');
   } else {
     isStreamConnected = true;
+    updateLiveBadge('connected');
   }
   setStatus(message, isError);
 }
@@ -443,7 +676,7 @@ async function fetchDashboardOnce(){
     if (setDashboard(nextData)) {
       renderDashboard();
     }
-    setStreamStatus('回退轮询更新成功');
+    setStreamStatus('轮询连接正常');
   } catch (err) {
     setStreamStatus(`刷新失败：${String(err && err.message ? err.message : err)}`, true);
     return;
@@ -500,7 +733,7 @@ function startSseDashboard(){
       if (setDashboard(nextData)) {
         renderDashboard();
       }
-      setStreamStatus('SSE 已连接，数据已更新。');
+      setStreamStatus('SSE 连接正常');
     } catch (err) {
       setStreamStatus(`SSE 数据解析失败：${String(err && err.message ? err.message : err)}`, true);
     }
@@ -515,58 +748,102 @@ function renderHero(){
   const t = data.totals;
   document.getElementById('hero-copy').textContent =
     `统计窗口 ${data.range.start_local} → ${data.range.end_local}。累计处理 ${fmtShort(t.grand_total)} tokens，估算花费 ${fmtUSD(t.grand_cost)}，缓存命中占 ${fmtPct(t.cache_ratio)}。这不是 usage report，是 Agent 生产力的赛后复盘。`;
-  document.getElementById('hero-chips').innerHTML = [
-    `<span class="chip"><i class="fa-solid fa-fire" style="color:var(--codex)"></i>${fmtShort(t.grand_total)} tokens</span>`,
-    `<span class="chip"><i class="fa-solid fa-dollar-sign" style="color:var(--cost)"></i>${fmtUSD(t.grand_cost)} cost</span>`,
-    `<span class="chip"><i class="fa-solid fa-database" style="color:var(--cache-read)"></i>${fmtPct(t.cache_ratio)} cached</span>`,
-    `<span class="chip"><i class="fa-solid fa-wrench" style="color:var(--accent)"></i>${fmtInt(t.tool_call_total)} tool calls</span>`
-  ].join('');
-  const cards = [
-    {label: 'Total Tokens', value: fmtShort(t.grand_total), hint: `日均 ${fmtShort(t.average_per_day)}，峰值 ${t.peak_day_label}`},
-    {label: 'Estimated Cost', value: fmtUSD(t.grand_cost), hint: `日均 ${fmtUSD(t.average_cost_per_day)}，30 天投影 ${fmtUSD(t.burn_rate_projection_30d)}`},
-    {label: 'Cache Stack', value: fmtShort(t.cache_read + t.cache_write), hint: `省下 ${fmtUSD(t.cache_savings_usd)}，命中率 ${fmtPct(t.cache_ratio)}`},
-    {label: 'Median Session', value: fmtShort(t.median_session_tokens), hint: `${t.median_session_minutes} 分钟 / ${fmtUSD(t.median_session_cost)}`}
+
+  const chipsEl = document.getElementById('hero-chips');
+  const chipDefs = [
+    {id: 'chip-tokens', icon: 'fa-fire', color: 'var(--codex)', value: t.grand_total, fmt: fmtShort, suffix: ' tokens'},
+    {id: 'chip-cost', icon: 'fa-dollar-sign', color: 'var(--cost)', value: t.grand_cost, fmt: fmtUSD, suffix: ' cost'},
+    {id: 'chip-cache', icon: 'fa-database', color: 'var(--cache-read)', value: t.cache_ratio, fmt: fmtPct, suffix: ' cached'},
+    {id: 'chip-tools', icon: 'fa-wrench', color: 'var(--accent)', value: t.tool_call_total, fmt: fmtInt, suffix: ' tool calls'}
   ];
-  document.getElementById('summary-side').innerHTML = cards.map(card => `
-    <div class="sc">
-      <div class="lbl">${card.label}</div>
-      <div class="val">${card.value}</div>
-      <div class="hint">${card.hint}</div>
-    </div>`).join('');
+  if (!document.getElementById('chip-tokens')) {
+    chipsEl.innerHTML = chipDefs.map(c =>
+      `<span class="chip"><i class="fa-solid ${c.icon}" style="color:${c.color}"></i><span id="${c.id}"></span>${c.suffix}</span>`
+    ).join('');
+  }
+  chipDefs.forEach(c => animateNum(document.getElementById(c.id), c.value, c.fmt));
+
+  const cardDefs = [
+    {id: 'sv-tokens', label: 'Total Tokens', value: t.grand_total, fmt: fmtShort, hint: `日均 ${fmtShort(t.average_per_day)}，峰值 ${t.peak_day_label}`},
+    {id: 'sv-cost', label: 'Estimated Cost', value: t.grand_cost, fmt: fmtUSD, hint: `日均 ${fmtUSD(t.average_cost_per_day)}，30 天投影 ${fmtUSD(t.burn_rate_projection_30d)}`},
+    {id: 'sv-cache', label: 'Cache Stack', value: t.cache_read + t.cache_write, fmt: fmtShort, hint: `省下 ${fmtUSD(t.cache_savings_usd)}，命中率 ${fmtPct(t.cache_ratio)}`},
+    {id: 'sv-session', label: 'Median Session', value: t.median_session_tokens, fmt: fmtShort, hint: `${t.median_session_minutes} 分钟 / ${fmtUSD(t.median_session_cost)}`}
+  ];
+  const sideEl = document.getElementById('summary-side');
+  if (!document.getElementById('sv-tokens')) {
+    sideEl.innerHTML = cardDefs.map(c => `
+      <div class="sc">
+        <div class="lbl">${c.label}</div>
+        <div class="val" id="${c.id}"></div>
+        <div class="hint" id="${c.id}-hint">${c.hint}</div>
+      </div>`).join('');
+  }
+  cardDefs.forEach(c => {
+    animateNum(document.getElementById(c.id), c.value, c.fmt);
+    const hintEl = document.getElementById(c.id + '-hint');
+    if (hintEl) hintEl.textContent = c.hint;
+  });
 }
 
 function renderSourceCards(){
-  document.getElementById('source-cards').innerHTML = data.source_cards.map(card => {
-    const cls = card.source.toLowerCase();
-    const icon = card.source === 'Codex' ? 'fa-terminal' : card.source === 'Claude' ? 'fa-feather-pointed' : 'fa-arrow-pointer';
-    return `<article class="p src ${cls}">
-      <div class="title"><span><i class="fa-solid ${icon}"></i> ${card.source}</span><span class="pill">${card.token_capable ? 'token-tracked' : 'activity-only'}</span></div>
-      <div class="big">${card.token_capable ? fmtShort(card.total) : fmtInt(card.messages)}</div>
-      <div class="sub">${card.token_capable ? 'tracked tokens' : 'messages only'}</div>
-      <div class="mg">
-        <div class="mi"><div class="k">Sessions</div><div class="v">${fmtInt(card.sessions)}</div></div>
-        <div class="mi"><div class="k">Cost</div><div class="v" style="color:var(--cost)">${card.token_capable ? fmtUSD(card.cost) : '-'}</div></div>
-        <div class="mi"><div class="k">Top Model</div><div class="v" style="font-size:12px">${card.top_model}</div></div>
-        <div class="mi"><div class="k">Cache</div><div class="v">${card.token_capable ? fmtShort(card.cache_read + card.cache_write) : '-'}</div></div>
-      </div>
-    </article>`;
-  }).join('');
+  const container = document.getElementById('source-cards');
+  const prefix = 'src-';
+  if (!document.getElementById(prefix + (data.source_cards[0] || {}).source)) {
+    container.innerHTML = data.source_cards.map(card => {
+      const cls = card.source.toLowerCase();
+      const id = prefix + card.source;
+      const icon = card.source === 'Codex' ? 'fa-terminal' : card.source === 'Claude' ? 'fa-feather-pointed' : 'fa-arrow-pointer';
+      return `<article class="p src ${cls}" id="${id}">
+        <div class="title"><span><i class="fa-solid ${icon}"></i> ${card.source}</span><span class="pill">${card.token_capable ? 'token-tracked' : 'activity-only'}</span></div>
+        <div class="big" id="${id}-big"></div>
+        <div class="sub">${card.token_capable ? 'tracked tokens' : 'messages only'}</div>
+        <div class="mg">
+          <div class="mi"><div class="k">Sessions</div><div class="v" id="${id}-sess"></div></div>
+          <div class="mi"><div class="k">Cost</div><div class="v" id="${id}-cost" style="color:var(--cost)"></div></div>
+          <div class="mi"><div class="k">Top Model</div><div class="v" style="font-size:12px">${card.top_model}</div></div>
+          <div class="mi"><div class="k">Cache</div><div class="v" id="${id}-cache"></div></div>
+        </div>
+      </article>`;
+    }).join('');
+  }
+  data.source_cards.forEach(card => {
+    const id = prefix + card.source;
+    animateNum(document.getElementById(id + '-big'), card.token_capable ? card.total : card.messages, card.token_capable ? fmtShort : fmtInt);
+    animateNum(document.getElementById(id + '-sess'), card.sessions, fmtInt);
+    if (card.token_capable) {
+      animateNum(document.getElementById(id + '-cost'), card.cost, fmtUSD);
+      animateNum(document.getElementById(id + '-cache'), card.cache_read + card.cache_write, fmtShort);
+    } else {
+      const costEl = document.getElementById(id + '-cost');
+      if (costEl) costEl.textContent = '-';
+      const cacheEl = document.getElementById(id + '-cache');
+      if (cacheEl) cacheEl.textContent = '-';
+    }
+  });
 }
 
 function renderCostCards(){
   const t = data.totals;
-  const cards = [
-    {label: 'Total Cost', value: fmtUSD(t.grand_cost), hint: `${data.range.day_count} 天累计`, cls: 'cost'},
-    {label: 'Daily Average', value: fmtUSD(t.average_cost_per_day), hint: `峰值 ${t.cost_peak_day_label}: ${fmtUSD(t.cost_peak_day_total)}`, cls: 'cost'},
-    {label: 'Cost / Message', value: fmtUSD(t.cost_per_message), hint: `中位 session ${fmtUSD(t.median_session_cost)}`, cls: 'cost'},
-    {label: 'Cache Savings', value: fmtUSD(t.cache_savings_usd), hint: `节省 ${fmtPct(t.cache_savings_ratio)}`, cls: 'save'}
+  const defs = [
+    {id: 'cc-total', label: 'Total Cost', value: t.grand_cost, fmt: fmtUSD, hint: `${data.range.day_count} 天累计`, cls: 'cost'},
+    {id: 'cc-avg', label: 'Daily Average', value: t.average_cost_per_day, fmt: fmtUSD, hint: `峰值 ${t.cost_peak_day_label}: ${fmtUSD(t.cost_peak_day_total)}`, cls: 'cost'},
+    {id: 'cc-msg', label: 'Cost / Message', value: t.cost_per_message, fmt: fmtUSD, hint: `中位 session ${fmtUSD(t.median_session_cost)}`, cls: 'cost'},
+    {id: 'cc-save', label: 'Cache Savings', value: t.cache_savings_usd, fmt: fmtUSD, hint: `节省 ${fmtPct(t.cache_savings_ratio)}`, cls: 'save'}
   ];
-  document.getElementById('cost-cards').innerHTML = cards.map(card => `
-    <article class="p cc ${card.cls}">
-      <div class="metric-k">${card.label}</div>
-      <div class="big">${card.value}</div>
-      <div class="tiny">${card.hint}</div>
-    </article>`).join('');
+  const container = document.getElementById('cost-cards');
+  if (!document.getElementById('cc-total')) {
+    container.innerHTML = defs.map(c => `
+      <article class="p cc ${c.cls}">
+        <div class="metric-k">${c.label}</div>
+        <div class="big" id="${c.id}"></div>
+        <div class="tiny" id="${c.id}-hint">${c.hint}</div>
+      </article>`).join('');
+  }
+  defs.forEach(c => {
+    animateNum(document.getElementById(c.id), c.value, c.fmt);
+    const hintEl = document.getElementById(c.id + '-hint');
+    if (hintEl) hintEl.textContent = c.hint;
+  });
 }
 
 function renderStory(){
@@ -1217,6 +1494,128 @@ function renderModelRadarChart(){
   });
 }
 
+/* ── Extended Analytics charts ── */
+function renderTurnDurChart(){
+  const ext = data.extended;
+  if (!ext || !ext.turn_durations) return;
+  const rows = ext.turn_durations.histogram;
+  const chart = initChart('turn-dur-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 48, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis'},
+    xAxis: {type: 'category', data: rows.map(r => r.label), axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    series: [{
+      type: 'bar', barMaxWidth: 30,
+      data: rows.map(r => ({value: r.count, itemStyle: {color: '#74c0fc', borderRadius: [6,6,0,0]}}))
+    }]
+  });
+}
+
+function renderDailyTurnDurChart(){
+  const ext = data.extended;
+  if (!ext || !ext.turn_durations) return;
+  const rows = ext.turn_durations.daily.filter(r => r.count > 0);
+  if (!rows.length) return;
+  const chart = initChart('daily-turn-dur-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 56, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis', valueFormatter: v => v == null ? '-' : (v/1000).toFixed(1)+'s'},
+    xAxis: {type: 'category', data: rows.map(r => r.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', name: 'ms', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: v => (v/1000).toFixed(0)+'s'}},
+    series: [{
+      type: 'line', smooth: true, symbolSize: 5,
+      lineStyle: {width: 2, color: '#b197fc'}, itemStyle: {color: '#b197fc'},
+      areaStyle: {color: 'rgba(177,151,252,.12)'},
+      data: rows.map(r => r.median_ms)
+    }]
+  });
+}
+
+function renderTaskRateChart(){
+  const ext = data.extended;
+  if (!ext || !ext.task_events) return;
+  const te = ext.task_events;
+  if (!te.started) return;
+  const chart = initChart('task-rate-chart');
+  const failed = te.started - te.completed;
+  chart.setOption({
+    ...chartTheme(),
+    tooltip: {...chartTheme().tooltip, trigger: 'item'},
+    legend: {bottom: 0, textStyle: {color: TX}},
+    series: [{
+      type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'],
+      label: {color: TX, formatter: '{b}: {c} ({d}%)'},
+      data: [
+        {value: te.completed, name: 'Completed', itemStyle: {color: '#51cf66'}},
+        {value: failed, name: 'Incomplete', itemStyle: {color: '#ff6b6b'}}
+      ]
+    }]
+  });
+}
+
+function renderCodegenModelChart(){
+  const ext = data.extended;
+  if (!ext || !ext.cursor_codegen || !ext.cursor_codegen.total) return;
+  const rows = ext.cursor_codegen.by_model.slice(0, 8);
+  const chart = initChart('codegen-model-chart');
+  const colors = ['#ff8a50','#ffd43b','#74c0fc','#51cf66','#b197fc','#e599f7','#ff6b6b','#f4b183'];
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 8, right: 24, bottom: 44, containLabel: true},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis'},
+    xAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    yAxis: {type: 'category', data: rows.map(r => r.model).reverse(), axisLabel: {color: TX, fontSize: 10, width: 140, overflow: 'truncate'}},
+    series: [{
+      type: 'bar', barMaxWidth: 22,
+      data: rows.map((r,i) => ({value: r.count, itemStyle: {color: colors[i%8], borderRadius: [0,6,6,0]}})).reverse()
+    }]
+  });
+}
+
+function renderCodegenDailyChart(){
+  const ext = data.extended;
+  if (!ext || !ext.cursor_codegen || !ext.cursor_codegen.total) return;
+  const rows = ext.cursor_codegen.daily;
+  const chart = initChart('codegen-daily-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 48, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis'},
+    xAxis: {type: 'category', data: rows.map(r => r.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    series: [{
+      type: 'bar', barMaxWidth: 14,
+      itemStyle: {color: '#748ffc', borderRadius: [4,4,0,0]},
+      data: rows.map(r => r.count)
+    }]
+  });
+}
+
+function renderAiContributionChart(){
+  const ext = data.extended;
+  if (!ext || !ext.ai_contribution || !ext.ai_contribution.total_commits) return;
+  const ai = ext.ai_contribution;
+  const chart = initChart('ai-contribution-chart');
+  chart.setOption({
+    ...chartTheme(),
+    tooltip: {...chartTheme().tooltip, trigger: 'item'},
+    legend: {bottom: 0, textStyle: {color: TX}},
+    series: [{
+      type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'],
+      label: {color: TX, formatter: '{b}\\n{c} lines ({d}%)'},
+      data: [
+        {value: ai.ai_lines_added, name: 'AI Added', itemStyle: {color: '#74c0fc'}},
+        {value: ai.human_lines_added, name: 'Human Added', itemStyle: {color: '#ffd43b'}},
+        {value: ai.ai_lines_deleted, name: 'AI Deleted', itemStyle: {color: '#b197fc'}},
+        {value: ai.human_lines_deleted, name: 'Human Deleted', itemStyle: {color: '#ff6b6b'}}
+      ].filter(d => d.value > 0)
+    }]
+  });
+}
+
 function renderSessionTable(){
   document.getElementById('session-table').innerHTML = `
     <thead>
@@ -1241,60 +1640,128 @@ function renderDashboard(){
   if (!data || !data.totals) {
     return;
   }
+  /* DOM-only sections render immediately */
   renderHero();
   renderSourceCards();
   renderCostCards();
   renderStory();
+  renderSessionTable();
+
+  /* First two charts render eagerly (above the fold) */
   renderDailyCostChart();
   renderCostBreakdownChart();
-  renderModelCostChart();
-  renderCostSankey();
-  renderDailyCostTypeChart();
-  renderCostCalendar();
-  renderRoseChart();
-  renderDailyTokenChart();
-  renderTokenSankey();
-  renderHeatmap();
-  renderSourceRadar();
-  renderTokenCalendar();
-  renderTimeline();
-  renderBubble();
-  renderTempo();
-  renderToolRanking();
-  renderToolDensity();
-  renderToolBigramChart();
-  renderTopCommands();
-  renderCommandSuccessChart();
-  renderEfficiencyChart();
-  renderProjectRanking();
-  renderFileTypesChart();
-  renderBranchActivityChart();
-  renderProductivityChart();
-  renderBurnRateChart();
-  renderCostPerToolChart();
-  renderSessionDurationChart();
-  renderModelRadarChart();
-  renderSessionTable();
+
+  /* All remaining charts are lazy — only init when scrolled into view */
+  lazyQueue.length = 0;
+  registerLazy('model-cost-chart', renderModelCostChart);
+  registerLazy('cost-sankey-chart', renderCostSankey);
+  registerLazy('daily-cost-type-chart', renderDailyCostTypeChart);
+  registerLazy('cost-calendar-chart', renderCostCalendar);
+  registerLazy('rose-chart', renderRoseChart);
+  registerLazy('daily-token-chart', renderDailyTokenChart);
+  registerLazy('token-sankey-chart', renderTokenSankey);
+  registerLazy('heatmap-chart', renderHeatmap);
+  registerLazy('source-radar-chart', renderSourceRadar);
+  registerLazy('token-calendar-chart', renderTokenCalendar);
+  registerLazy('timeline-chart', renderTimeline);
+  registerLazy('bubble-chart', renderBubble);
+  registerLazy('tempo-chart', renderTempo);
+  registerLazy('tool-ranking-chart', renderToolRanking);
+  registerLazy('tool-density-chart', renderToolDensity);
+  registerLazy('tool-bigram-chart', renderToolBigramChart);
+  registerLazy('top-commands-chart', renderTopCommands);
+  registerLazy('command-success-chart', renderCommandSuccessChart);
+  registerLazy('efficiency-chart', renderEfficiencyChart);
+  registerLazy('project-ranking-chart', renderProjectRanking);
+  registerLazy('file-types-chart', renderFileTypesChart);
+  registerLazy('branch-activity-chart', renderBranchActivityChart);
+  registerLazy('productivity-chart', renderProductivityChart);
+  registerLazy('burn-rate-chart', renderBurnRateChart);
+  registerLazy('cost-per-tool-chart', renderCostPerToolChart);
+  registerLazy('session-duration-chart', renderSessionDurationChart);
+  registerLazy('model-radar-chart', renderModelRadarChart);
+  registerLazy('turn-dur-chart', renderTurnDurChart);
+  registerLazy('daily-turn-dur-chart', renderDailyTurnDurChart);
+  registerLazy('task-rate-chart', renderTaskRateChart);
+  registerLazy('codegen-model-chart', renderCodegenModelChart);
+  registerLazy('codegen-daily-chart', renderCodegenDailyChart);
+  registerLazy('ai-contribution-chart', renderAiContributionChart);
+  flushLazy();
 
   requestAnimationFrame(() => {
     charts.forEach(chart => chart.resize());
-    setTimeout(() => charts.forEach(chart => chart.resize()), 100);
+    isFirstRender = false;
   });
 }
 
+function renderRangeTabs(){
+  const el = document.getElementById('range-tabs');
+  if (!el) return;
+  const allLabel = defaultSince ? `从 ${defaultSince}` : `${defaultDays} 天`;
+  const tabs = [
+    {key: 'all', label: allLabel},
+    {key: 'week', label: '近 7 天'},
+    {key: 'today', label: '今日'}
+  ];
+  el.innerHTML = tabs.map(t =>
+    `<button class="range-tab${t.key === activeRangeKey ? ' active' : ''}" data-range="${t.key}">${t.label}</button>`
+  ).join('');
+  el.querySelectorAll('.range-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchRange(btn.dataset.range));
+  });
+}
+
+async function switchRange(key){
+  if (key === activeRangeKey) return;
+  activeRangeKey = key;
+  dashboardApiUrl = _apiUrl(key);
+  dashboardStreamUrl = _streamUrl(key);
+  lastDashboardHash = '';
+  /* Clear prev values so numbers animate on tab switch */
+  _numPrevValues = new WeakMap();
+  isFirstRender = false;
+  renderRangeTabs();
+  if (isLiveMode) {
+    stopStream();
+    /* Fetch once immediately, then reconnect SSE */
+    await fetchDashboardOnce();
+    startSseDashboard();
+  } else {
+    /* Static mode: fetch from API if available, otherwise we can't switch */
+    try {
+      const res = await fetch(dashboardApiUrl, {cache: 'no-store'});
+      if (res.ok) {
+        const nextData = await res.json();
+        data = nextData;
+        lastDashboardHash = (nextData._meta || {}).generated_at || '';
+        renderDashboard();
+      }
+    } catch (e) {
+      showToast('切换失败: ' + (e.message || e), 'err', 3000);
+    }
+  }
+}
+
 function bootDashboard(){
+  renderRangeTabs();
   if (data && data.totals) {
+    if (!isLiveMode) updateLiveBadge('off');
     renderDashboard();
     return;
   }
   if (!isLiveMode) {
+    updateLiveBadge('off');
     document.getElementById('hero-copy').textContent = '缺少可用数据。';
     return;
   }
   startSseDashboard();
 }
 
-window.addEventListener('resize', () => charts.forEach(chart => chart.resize()));
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => charts.forEach(chart => chart.resize()), 150);
+});
 window.addEventListener('beforeunload', stopStream);
 bootDashboard();
 </script>

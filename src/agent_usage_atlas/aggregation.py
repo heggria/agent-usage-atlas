@@ -44,7 +44,9 @@ def _build_sankey(cards: list[dict], specs: list[tuple[str, str]]) -> dict:
     return {"nodes": nodes, "links": links}
 
 
-def aggregate(events, tool_calls, session_metas, *, start_local, now_local, local_tz):
+def aggregate(events, tool_calls, session_metas, *, start_local, now_local, local_tz,
+              task_events=None, turn_durations=None, cursor_codegen=None,
+              cursor_commits=None, claude_stats_cache=None):
     source_rollups = defaultdict(
         lambda: {
             "source": "",
@@ -637,6 +639,136 @@ def aggregate(events, tool_calls, session_metas, *, start_local, now_local, loca
         ],
     )
 
+    # ── Extended analytics: turn durations, task events, cursor codegen, claude stats ──
+    task_events = task_events or []
+    turn_durations = turn_durations or []
+    cursor_codegen = cursor_codegen or []
+    cursor_commits = cursor_commits or []
+    claude_stats_cache = claude_stats_cache or {}
+
+    # Turn duration stats (response time analysis)
+    dur_by_source = defaultdict(list)
+    for td in turn_durations:
+        dur_by_source[td.source].append(td.duration_ms)
+    dur_all = [td.duration_ms for td in turn_durations]
+    sorted_dur = sorted(dur_all)
+
+    turn_duration_stats = {
+        "total_turns": len(dur_all),
+        "median_ms": round(median(sorted_dur)) if sorted_dur else 0,
+        "p90_ms": round(_percentile(sorted_dur, 0.9)) if sorted_dur else 0,
+        "p99_ms": round(_percentile(sorted_dur, 0.99)) if sorted_dur else 0,
+        "by_source": {},
+    }
+    for src, vals in dur_by_source.items():
+        sv = sorted(vals)
+        turn_duration_stats["by_source"][src] = {
+            "count": len(sv),
+            "median_ms": round(median(sv)),
+            "p90_ms": round(_percentile(sv, 0.9)),
+        }
+
+    # Duration histogram buckets (in seconds)
+    dur_buckets = [
+        ("<5s", 0, 5000),
+        ("5-15s", 5000, 15000),
+        ("15-30s", 15000, 30000),
+        ("30-60s", 30000, 60000),
+        ("1-5m", 60000, 300000),
+        (">5m", 300000, float("inf")),
+    ]
+    turn_dur_histogram = []
+    for label, lo, hi in dur_buckets:
+        count = sum(1 for d in dur_all if lo <= d < hi)
+        turn_dur_histogram.append({"label": label, "count": count})
+
+    # Daily turn duration (median per day)
+    daily_dur = defaultdict(list)
+    for td in turn_durations:
+        local_ts = td.timestamp.astimezone(local_tz)
+        daily_dur[local_ts.date().isoformat()].append(td.duration_ms)
+    daily_turn_durations = []
+    current_date = start_local.date()
+    while current_date <= now_local.date():
+        dk = current_date.isoformat()
+        vals = daily_dur.get(dk, [])
+        daily_turn_durations.append({
+            "date": dk,
+            "label": current_date.strftime("%m/%d"),
+            "median_ms": round(median(sorted(vals))) if vals else 0,
+            "count": len(vals),
+        })
+        current_date += timedelta(days=1)
+
+    # Task events (Codex task success rate)
+    started_count = sum(1 for te in task_events if te.event_type == "started")
+    complete_count = sum(1 for te in task_events if te.event_type == "complete")
+    task_stats = {
+        "started": started_count,
+        "completed": complete_count,
+        "completion_rate": round(_percent(complete_count, started_count), 3),
+    }
+
+    # Cursor code generation by model
+    codegen_by_model = Counter()
+    codegen_by_ext = Counter()
+    codegen_by_source = Counter()
+    codegen_daily = defaultdict(int)
+    for cg in cursor_codegen:
+        codegen_by_model[cg.model] += 1
+        if cg.file_extension:
+            codegen_by_ext[cg.file_extension] += 1
+        codegen_by_source[cg.gen_source] += 1
+        local_ts = cg.timestamp.astimezone(local_tz)
+        codegen_daily[local_ts.date().isoformat()] += 1
+
+    cursor_codegen_data = {
+        "total": len(cursor_codegen),
+        "by_model": [{"model": m, "count": c} for m, c in codegen_by_model.most_common(10)],
+        "by_extension": [{"ext": e, "count": c} for e, c in codegen_by_ext.most_common(15)],
+        "by_source": [{"source": s, "count": c} for s, c in codegen_by_source.most_common()],
+        "daily": [
+            {"date": dk, "label": dk[5:].replace("-", "/"), "count": codegen_daily.get(dk, 0)}
+            for dk in (d["date"] for d in ordered_days)
+        ],
+    }
+
+    # Cursor AI contribution (scored commits)
+    total_ai_added = sum(c.composer_added + c.tab_added for c in cursor_commits)
+    total_human_added = sum(c.human_added for c in cursor_commits)
+    total_ai_deleted = sum(c.composer_deleted + c.tab_deleted for c in cursor_commits)
+    total_human_deleted = sum(c.human_deleted for c in cursor_commits)
+    total_lines = total_ai_added + total_human_added + total_ai_deleted + total_human_deleted
+    ai_contribution_data = {
+        "total_commits": len(cursor_commits),
+        "ai_lines_added": total_ai_added,
+        "human_lines_added": total_human_added,
+        "ai_lines_deleted": total_ai_deleted,
+        "human_lines_deleted": total_human_deleted,
+        "ai_ratio": round(_percent(total_ai_added + total_ai_deleted, total_lines), 3),
+        "commits": [
+            {
+                "hash": c.commit_hash[:8],
+                "ai_added": c.composer_added + c.tab_added,
+                "human_added": c.human_added,
+                "ai_deleted": c.composer_deleted + c.tab_deleted,
+                "human_deleted": c.human_deleted,
+            }
+            for c in sorted(cursor_commits, key=lambda x: (x.composer_added + x.tab_added), reverse=True)[:20]
+        ],
+    }
+
+    # Claude stats cache (hourly distribution, longest session)
+    claude_stats_data = {}
+    if claude_stats_cache:
+        claude_stats_data = {
+            "hour_counts": claude_stats_cache.get("hour_counts", []),
+            "total_sessions": claude_stats_cache.get("total_sessions", 0),
+            "total_messages": claude_stats_cache.get("total_messages", 0),
+            "longest_session": claude_stats_cache.get("longest_session"),
+            "first_session_date": claude_stats_cache.get("first_session_date"),
+        }
+
     return {
         "range": {
             "start_local": start_local.isoformat(timespec="minutes"),
@@ -786,5 +918,16 @@ def aggregate(events, tool_calls, session_metas, *, start_local, now_local, loca
             "jokes": jokes,
             "source_notes": source_notes,
             "tempo_notes": tempo_notes,
+        },
+        "extended": {
+            "turn_durations": {
+                "stats": turn_duration_stats,
+                "histogram": turn_dur_histogram,
+                "daily": daily_turn_durations,
+            },
+            "task_events": task_stats,
+            "cursor_codegen": cursor_codegen_data,
+            "ai_contribution": ai_contribution_data,
+            "claude_stats": claude_stats_data,
         },
     }

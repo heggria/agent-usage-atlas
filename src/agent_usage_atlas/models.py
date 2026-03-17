@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 
 # Model pricing (USD / 1M tokens): {model: (input, cache_read, cache_write, output, reasoning)}
 _S = (3, .3, 3.75, 15, 15)
@@ -11,8 +12,11 @@ _H = (.8, .08, 1, 4, 4)
 _OH = (5, .5, 6.25, 25, 25)
 _G5 = (2.5, .25, 0, 15, 15)
 _G5M = (1.1, .275, 0, 4.4, 4.4)
+_MM = (.29, .029, .36, 1.16, 1.16)  # MiniMax CNY÷7.25
 
 _P = {
+    # MiniMax family
+    "MiniMax-M2": _MM,
     # OpenAI GPT-5 family
     "gpt-5.4": _G5,
     "gpt-5.3-codex-spark": _G5M,
@@ -38,6 +42,7 @@ _P = {
 }
 
 
+@lru_cache(maxsize=128)
 def _gp(model):
     ml = model.lower()
     # Exact prefix match first (longest match wins due to dict order)
@@ -69,14 +74,18 @@ class UsageEvent:
         return self.uncached_input + self.cache_read + self.cache_write + self.output + self.reasoning
 
     @property
+    def _pricing(self):
+        return _gp(self.model)
+
+    @property
     def cost(self):
-        p = _gp(self.model)
+        p = self._pricing
         return (self.uncached_input * p[0] + self.cache_read * p[1] + self.cache_write * p[2]
                 + self.output * p[3] + self.reasoning * p[4]) / 1e6
 
     @property
     def cost_breakdown(self):
-        p = _gp(self.model)
+        p = self._pricing
         return {
             "input": self.uncached_input * p[0] / 1e6,
             "cache_read": self.cache_read * p[1] / 1e6,
@@ -105,6 +114,46 @@ class SessionMeta:
     cwd: str | None = None
     project: str | None = None
     git_branch: str | None = None
+
+
+@dataclass
+class TurnDuration:
+    source: str
+    timestamp: datetime
+    session_id: str
+    duration_ms: int
+
+
+@dataclass
+class TaskEvent:
+    source: str
+    timestamp: datetime
+    session_id: str
+    event_type: str  # "started" | "complete"
+
+
+@dataclass
+class CodeGenRecord:
+    source: str
+    timestamp: datetime
+    model: str
+    file_extension: str
+    conversation_id: str
+    gen_source: str  # "composer" | "tab" | "human"
+
+
+@dataclass
+class ScoredCommit:
+    commit_hash: str
+    commit_date: datetime | None
+    lines_added: int = 0
+    lines_deleted: int = 0
+    composer_added: int = 0
+    composer_deleted: int = 0
+    human_added: int = 0
+    human_deleted: int = 0
+    tab_added: int = 0
+    tab_deleted: int = 0
 
 
 # Formatting helpers
