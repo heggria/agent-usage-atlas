@@ -16,9 +16,11 @@ Agent Usage Atlas reads your local log files (`~/.codex/`, `~/.claude/`, `~/.cur
 
 | Agent | Token Tracking | Cost Estimation | Tool Call Tracking | Session Meta |
 |-------|:-:|:-:|:-:|:-:|
-| [Codex CLI](https://github.com/openai/codex) | ✅ | ✅ | ✅ | ✅ |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ | ✅ | ✅ | ✅ |
+| [Codex CLI](https://github.com/openai/codex) (GPT-5 family) | ✅ | ✅ | ✅ | ✅ |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (Claude 3–4.6) | ✅ | ✅ | ✅ | ✅ |
 | [Cursor](https://www.cursor.com/) | Activity only | — | — | — |
+
+> Pricing covers GPT-5.x, Claude 3/3.5/4.x (Haiku/Sonnet/Opus), and MiniMax-M2 out of the box.
 
 ## Features
 
@@ -30,6 +32,8 @@ Agent Usage Atlas reads your local log files (`~/.codex/`, `~/.claude/`, `~/.cur
 - **Working pattern heatmap** — hour × weekday activity distribution to find your flow states
 - **Session deep-dive** — duration histogram, complexity scatter, median session cost
 - **Live dashboard mode** — SSE-powered auto-refresh server with date range tabs (All / 7 days / Today)
+- **Bilingual narratives** — auto-generated story summaries in both Chinese and English
+- **Animated data updates** — stock-style green/red flash on number changes in live mode
 - **Single self-contained HTML** — one file, works offline, shareable, archivable
 - **Zero dependencies** — pure Python standard library, no npm/Node/Rust/Docker required
 - **Fully local** — all data stays on your machine, nothing sent anywhere
@@ -51,7 +55,7 @@ Agent Usage Atlas reads your local log files (`~/.codex/`, `~/.claude/`, `~/.cur
 </tr>
 <tr>
 <td><img src="docs/screenshots/heatmap-sessions.png" alt="Heatmap & Sessions" /></td>
-<td><img src="docs/screenshots/tools-efficiency.png" alt="Tool Intelligence" /></td>
+<td><img src="docs/screenshots/tool-charts.png" alt="Tool Intelligence" /></td>
 </tr>
 </table>
 
@@ -141,7 +145,7 @@ All data stays local — nothing is sent to any server.
 | | Agent Usage Atlas | [ccusage](https://github.com/ryoppippi/ccusage) | [splitrail](https://github.com/Piebald-AI/splitrail) | [claudetop](https://github.com/GauravRatnawat/claudetop) | [Langfuse](https://github.com/langfuse/langfuse) | [Helicone](https://github.com/Helicone/helicone) |
 |---|---|---|---|---|---|---|
 | **Multi-agent** | Claude + Codex + Cursor | Claude + Codex + others | 10+ agents | Claude only | Any (via SDK) | Any (via proxy) |
-| **Visualization** | 25+ interactive ECharts | CLI tables | CLI + cloud | TUI (7 views) | Web dashboard | Web dashboard |
+| **Visualization** | 25+ interactive ECharts (CN+EN) | CLI tables | CLI + cloud | TUI (7 views) | Web dashboard | Web dashboard |
 | **Self-contained HTML** | ✅ | — | — | — | — | — |
 | **Zero dependencies** | ✅ Python stdlib | Node.js | Rust | Node.js | Docker + PG | Docker + infra |
 | **Fully local** | ✅ | ✅ | Cloud optional | ✅ | Self-host | Self-host |
@@ -159,7 +163,8 @@ All data stays local — nothing is sent to any server.
 4. **Single self-contained HTML** — one file, works offline, email it to yourself, archive it
 5. **Live SSE server** — real-time auto-refresh with date range switching (All / 7 days / Today)
 6. **Cache efficiency analytics** — unique among local tools, tracks savings and hit rates
-7. **Animated transitions** — smooth number counter animations on live data refresh
+7. **Animated transitions** — smooth number counter animations with stock-style green/red flash on live data refresh
+8. **Bilingual narrative** — auto-generated story/summary in both Chinese and English
 
 ## Architecture
 
@@ -167,9 +172,9 @@ All data stays local — nothing is sent to any server.
 src/agent_usage_atlas/
 ├── cli.py          # CLI entry point, build_dashboard_payload()
 ├── parsers.py      # Codex / Claude / Cursor log parsers
-├── models.py       # UsageEvent, ToolCall, SessionMeta + pricing
-├── aggregation.py  # Full dashboard payload computation
-├── template.py     # Self-contained HTML/CSS/JS template
+├── models.py       # UsageEvent, ToolCall, SessionMeta + pricing (GPT-5, Claude 3–4.6, MiniMax)
+├── aggregation.py  # Full dashboard payload computation (CN + EN narratives)
+├── template.py     # Self-contained HTML/CSS/JS template (number flash animations)
 └── server.py       # Live SSE server (stdlib http.server)
 ```
 

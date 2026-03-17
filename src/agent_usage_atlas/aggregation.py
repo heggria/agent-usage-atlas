@@ -585,38 +585,49 @@ def aggregate(events, tool_calls, session_metas, *, start_local, now_local, loca
         f"{card['source']} 主力模型 {card['top_model']}，{card['sessions']} 个 session，{card['messages']} 条消息。"
         for card in source_cards
     ]
+    source_notes_en = [
+        f"{card['source']} primary model {card['top_model']}, {card['sessions']} sessions, {card['messages']} messages."
+        for card in source_cards
+    ]
     jokes = []
+    jokes_en = []
     if cache_ratio > 0.75:
         jokes.append("缓存占比高得像给模型办了无限次回访卡。")
+        jokes_en.append("Cache ratio so high it's like the model has an unlimited loyalty card.")
     if peak_day and peak_day["total_tokens"] > 300_000_000:
         jokes.append("峰值日像给 Agent 背后装了双涡轮。")
+        jokes_en.append("Peak day looks like the Agent had twin turbos installed.")
     if any(not card["token_capable"] for card in source_cards):
         jokes.append("有些来源很勤奋，但没有留下完整 token 小票。")
+        jokes_en.append("Some sources work hard but don't leave a full token receipt.")
+
+    _tool_total = sum(combined_tool_counts.values())
+    _cmd_rate = _percent(successful_commands, total_commands)
+    _peak_label = (peak_day or {}).get("label", "-")
+    _peak_tokens = (peak_day or {}).get("total_tokens", 0)
+    _cache_total = grand_cache_read + grand_cache_write
 
     story_narrative = [
-        {
-            "icon": "fa-bolt",
-            "text": f"统计窗口内共处理 {grand_total:,} tokens，估算成本 ${grand_cost:,.2f}。",
-        },
-        {
-            "icon": "fa-fire",
-            "text": f"峰值日是 {(peak_day or {}).get('label', '-')}, 当天跑了 {(peak_day or {}).get('total_tokens', 0):,} tokens。",
-        },
-        {
-            "icon": "fa-database",
-            "text": f"缓存读写共 {(grand_cache_read + grand_cache_write):,} tokens，省下约 ${cache_savings_usd:,.2f}。",
-        },
-        {
-            "icon": "fa-wrench",
-            "text": f"全局工具调用 {sum(combined_tool_counts.values()):,} 次，命令成功率 {_percent(successful_commands, total_commands):.1%}。",
-        },
+        {"icon": "fa-bolt", "text": f"统计窗口内共处理 {grand_total:,} tokens，估算成本 ${grand_cost:,.2f}。"},
+        {"icon": "fa-fire", "text": f"峰值日是 {_peak_label}, 当天跑了 {_peak_tokens:,} tokens。"},
+        {"icon": "fa-database", "text": f"缓存读写共 {_cache_total:,} tokens，省下约 ${cache_savings_usd:,.2f}。"},
+        {"icon": "fa-wrench", "text": f"全局工具调用 {_tool_total:,} 次，命令成功率 {_cmd_rate:.1%}。"},
+    ]
+    story_narrative_en = [
+        {"icon": "fa-bolt", "text": f"Processed {grand_total:,} tokens in this window, estimated cost ${grand_cost:,.2f}."},
+        {"icon": "fa-fire", "text": f"Peak day was {_peak_label}, with {_peak_tokens:,} tokens."},
+        {"icon": "fa-database", "text": f"Cache read/write totalled {_cache_total:,} tokens, saving ~${cache_savings_usd:,.2f}."},
+        {"icon": "fa-wrench", "text": f"Total tool calls: {_tool_total:,}, command success rate {_cmd_rate:.1%}."},
     ]
     tempo_notes = []
+    tempo_notes_en = []
     hottest_hour = max(hourly_rows, key=lambda row: sum(row.get(source, 0) for source in SOURCE_ORDER), default=None)
     if hottest_hour:
         tempo_notes.append(f"最热小时是 {hottest_hour['hour']:02d}:00。")
+        tempo_notes_en.append(f"Hottest hour is {hottest_hour['hour']:02d}:00.")
     if cost_peak_day:
         tempo_notes.append(f"最烧钱的一天是 {cost_peak_day['label']}，花了 ${cost_peak_day['cost']:.2f}。")
+        tempo_notes_en.append(f"Most expensive day was {cost_peak_day['label']}, spent ${cost_peak_day['cost']:.2f}.")
 
     token_sankey = _build_sankey(
         source_cards,
@@ -918,6 +929,10 @@ def aggregate(events, tool_calls, session_metas, *, start_local, now_local, loca
             "jokes": jokes,
             "source_notes": source_notes,
             "tempo_notes": tempo_notes,
+            "narrative_en": story_narrative_en,
+            "jokes_en": jokes_en,
+            "source_notes_en": source_notes_en,
+            "tempo_notes_en": tempo_notes_en,
         },
         "extended": {
             "turn_durations": {

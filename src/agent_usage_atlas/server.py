@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+import fcntl
 import hashlib
 import json
+import os
+import sys
 import threading
 from datetime import datetime
+from pathlib import Path
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -213,6 +218,38 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
 
+_LOCK_FILE = Path.home() / ".cache" / "agent-usage-atlas" / "server.lock"
+_lock_fp = None
+
+
+def _acquire_lock() -> None:
+    """Acquire an exclusive file lock to ensure only one server instance runs."""
+    global _lock_fp
+    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _lock_fp = open(_LOCK_FILE, "w")  # noqa: SIM115
+    try:
+        fcntl.flock(_lock_fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        _lock_fp.close()
+        _lock_fp = None
+        print("Error: another Agent Usage Atlas server is already running.", file=sys.stderr)
+        sys.exit(1)
+    _lock_fp.write(str(os.getpid()))
+    _lock_fp.flush()
+    atexit.register(_release_lock)
+
+
+def _release_lock() -> None:
+    global _lock_fp
+    if _lock_fp is not None:
+        try:
+            fcntl.flock(_lock_fp, fcntl.LOCK_UN)
+            _lock_fp.close()
+        except OSError:
+            pass
+        _lock_fp = None
+
+
 def run_server(
     *,
     host: str = "127.0.0.1",
@@ -222,6 +259,8 @@ def run_server(
     interval: int = 5,
     open_browser: bool = False,
 ) -> None:
+    _acquire_lock()
+
     if since:
         datetime.strptime(since, "%Y-%m-%d")
     DashboardHandler.default_days = days

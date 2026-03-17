@@ -229,6 +229,21 @@ th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--border)}
 th{color:var(--text-muted);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
 td{color:var(--text-secondary)}
 tr:hover td{background:rgba(255,255,255,.02)}
+/* ── Number change flash ── */
+@keyframes flash-up{
+  0%{color:inherit;text-shadow:none}
+  18%{color:#51cf66;text-shadow:0 0 10px rgba(81,207,102,.5)}
+  50%{color:#51cf66;text-shadow:0 0 6px rgba(81,207,102,.3)}
+  100%{color:inherit;text-shadow:none}
+}
+@keyframes flash-down{
+  0%{color:inherit;text-shadow:none}
+  18%{color:#ff6b6b;text-shadow:0 0 10px rgba(255,107,107,.5)}
+  50%{color:#ff6b6b;text-shadow:0 0 6px rgba(255,107,107,.3)}
+  100%{color:inherit;text-shadow:none}
+}
+.num-up{animation:flash-up 1.4s ease-out both}
+.num-down{animation:flash-down 1.4s ease-out both}
 .footer{margin-top:16px;color:var(--text-muted);font-size:11px;line-height:1.65}
 .footer code{
   padding:2px 6px;border-radius:6px;
@@ -677,6 +692,12 @@ function animateNum(el, newRaw, formatter) {
     el.textContent = formatter(newVal);
     return;
   }
+  /* Stock-style color flash */
+  const dir = newVal > oldVal ? 'num-up' : 'num-down';
+  el.classList.remove('num-up', 'num-down');
+  /* Force reflow so re-adding the same class restarts the animation */
+  void el.offsetWidth;
+  el.classList.add(dir);
   const locked = _lockFmt(formatter, newVal);
   const duration = 600;
   const startTime = performance.now();
