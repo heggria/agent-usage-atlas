@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "agent-usage-atlas"
 version = "0.1.0"
@@ -6,6 +10,30 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = []
+authors = [
+    {name = "heggria"},
+]
+keywords = ["ai", "agent", "dashboard", "token", "cost", "codex", "claude", "cursor", "analytics"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/heggria/agent-usage-atlas"
+Repository = "https://github.com/heggria/agent-usage-atlas"
+Issues = "https://github.com/heggria/agent-usage-atlas/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

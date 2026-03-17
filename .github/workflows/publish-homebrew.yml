@@ -1,0 +1,38 @@
+name: Publish Homebrew Formula
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  homebrew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: |
+          pip install build
+          python -m build --sdist
+
+      - name: Generate Homebrew formula
+        run: python scripts/generate_formula.py
+
+      - name: Upload formula as release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Create release if it doesn't exist
+          gh release view "$TAG" 2>/dev/null || gh release create "$TAG" --generate-notes
+          # Upload formula and sdist
+          gh release upload "$TAG" dist/*.tar.gz --clobber
+          gh release upload "$TAG" Formula/agent-usage-atlas.rb --clobber

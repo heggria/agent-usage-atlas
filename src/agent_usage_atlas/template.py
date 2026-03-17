@@ -553,12 +553,12 @@ function toggleLang() {
   document.getElementById('lang-btn').textContent = '\\u{1F310} ' + lang.toUpperCase();
   _numPrevValues = new WeakMap();
   isFirstRender = false;
-  /* Force re-create DOM elements */
-  ['chip-tokens','sv-tokens','cc-total','src-' + ((data && data.source_cards && data.source_cards[0]) || {}).source].forEach(id => {
+  /* Force re-create DOM elements by clearing containers */
+  ['hero-chips','summary-side','source-cards','cost-cards'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.removeAttribute('id');
+    if (el) el.innerHTML = '';
   });
-  applyI18n();
+  renderRangeTabs();
   renderDashboard();
 }
 
@@ -818,7 +818,7 @@ function updateLiveBadge(state){
   if (!badge) return;
   badge.className = 'live-badge ' + state;
   badge.querySelector('.dot') || badge.insertAdjacentHTML('afterbegin','<span class="dot"></span>');
-  const label = state === 'connected' ? 'Live' : state === 'disconnected' ? 'Offline' : 'Static';
+  const label = state === 'connected' ? t('badgeLive') : state === 'disconnected' ? t('badgeOffline') : t('badgeStatic');
   const spans = badge.childNodes;
   if (spans.length > 1) spans[spans.length - 1].textContent = label;
   else badge.appendChild(document.createTextNode(label));
@@ -861,20 +861,20 @@ async function fetchDashboardOnce(){
   try {
     const res = await fetch(url, {cache: 'no-store'});
     if (!res.ok) {
-      setStreamStatus(`刷新失败：${res.status} ${res.statusText}`, true);
+      setStreamStatus(t('toastRefreshFail', {err: res.status + ' ' + res.statusText}), true);
       return;
     }
     const nextData = await res.json();
     if (!nextData || typeof nextData !== 'object') {
-      setStreamStatus('刷新返回数据为空或格式异常', true);
+      setStreamStatus(t('toastRefreshEmpty'), true);
       return;
     }
     if (setDashboard(nextData)) {
       renderDashboard();
     }
-    setStreamStatus('轮询连接正常');
+    setStreamStatus(t('toastPollOk'));
   } catch (err) {
-    setStreamStatus(`刷新失败：${String(err && err.message ? err.message : err)}`, true);
+    setStreamStatus(t('toastRefreshFail', {err: String(err && err.message ? err.message : err)}), true);
     return;
   }
 }
@@ -892,7 +892,7 @@ function stopStream(){
 
 function startPollingFallback(){
   if (!isLiveMode || refreshTimer !== null) return;
-  setStreamStatus('当前环境不支持 EventSource，回退轮询更新。');
+  setStreamStatus(t('toastPollFallback'));
   fetchDashboardOnce();
   const intervalMs = Math.max(1000, Number(__POLL_MS__) || 5000);
   refreshTimer = setInterval(() => {
@@ -910,17 +910,17 @@ function startSseDashboard(){
   try {
     streamSource = new EventSource(dashboardStreamUrl);
   } catch (err) {
-    setStreamStatus(`SSE 初始化失败：${String(err && err.message ? err.message : err)}，回退轮询更新。`, true);
+    setStreamStatus(t('toastSseInitFail', {err: String(err && err.message ? err.message : err)}), true);
     startPollingFallback();
     return;
   }
 
   streamSource.onopen = () => {
-    setStreamStatus('SSE 已连接，等待实时更新。');
+    setStreamStatus(t('toastSseInit'));
   };
 
   streamSource.onerror = () => {
-    setStreamStatus('实时连接中断，正在自动重连…', true);
+    setStreamStatus(t('toastSseReconnect'), true);
   };
 
   streamSource.onmessage = event => {
@@ -929,9 +929,9 @@ function startSseDashboard(){
       if (setDashboard(nextData)) {
         renderDashboard();
       }
-      setStreamStatus('SSE 连接正常');
+      setStreamStatus(t('toastSseOk'));
     } catch (err) {
-      setStreamStatus(`SSE 数据解析失败：${String(err && err.message ? err.message : err)}`, true);
+      setStreamStatus(t('toastSseParseFail', {err: String(err && err.message ? err.message : err)}), true);
     }
   };
 }
@@ -1259,9 +1259,11 @@ function renderTokenSankey(){
       links: data.trend_analysis.token_sankey.links
     }]
   });
+  const snKey = lang === 'en' ? 'source_notes_en' : 'source_notes';
+  const jkKey = lang === 'en' ? 'jokes_en' : 'jokes';
   document.getElementById('source-notes').innerHTML = [
-    ...data.story.source_notes.map(text => `<div class="note"><i class="fa-solid fa-circle-info"></i><div>${text}</div></div>`),
-    ...data.story.jokes.map(text => `<div class="note"><i class="fa-solid fa-face-smile"></i><div>${text}</div></div>`)
+    ...(data.story[snKey] || data.story.source_notes).map(txt => `<div class="note"><i class="fa-solid fa-circle-info"></i><div>${txt}</div></div>`),
+    ...(data.story[jkKey] || data.story.jokes).map(txt => `<div class="note"><i class="fa-solid fa-face-smile"></i><div>${txt}</div></div>`)
   ].join('');
 }
 
@@ -1342,9 +1344,9 @@ function renderTimeline(){
       {type: 'value', splitLine: {show: false}, axisLabel: {color: TX, formatter: value => fmtShort(value)}}
     ],
     series: [
-      {name: 'Daily Total', type: 'bar', barMaxWidth: 24, itemStyle: {color: 'rgba(255,138,80,.32)', borderRadius: [6, 6, 0, 0]}, data: timeline.days.map(day => day.total_tokens)},
+      {name: t('seriesDailyTotal'), type: 'bar', barMaxWidth: 24, itemStyle: {color: 'rgba(255,138,80,.32)', borderRadius: [6, 6, 0, 0]}, data: timeline.days.map(day => day.total_tokens)},
       {
-        name: 'Cumulative',
+        name: t('seriesCumulative'),
         type: 'line',
         yAxisIndex: 1,
         smooth: true,
@@ -1374,8 +1376,8 @@ function renderBubble(){
       ...chartTheme().tooltip,
       formatter: params => `${params.seriesName}<br>${params.data.session}<br>${fmtShort(params.data.value[1])} tokens<br>${params.data.value[0]} min`
     },
-    xAxis: {name: 'Minutes', nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
-    yAxis: {name: 'Tokens', nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
+    xAxis: {name: t('axisMinutes'), nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    yAxis: {name: t('axisTokens'), nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
     series: ['Codex', 'Claude', 'Cursor'].map(source => ({
       name: source,
       type: 'scatter',
@@ -1408,7 +1410,8 @@ function renderTempo(){
       data: rows.map(row => row[source] || 0)
     }))
   });
-  document.getElementById('tempo-notes').innerHTML = data.story.tempo_notes.map(text => `<div class="note"><i class="fa-solid fa-clock"></i><div>${text}</div></div>`).join('');
+  const tnKey = lang === 'en' ? 'tempo_notes_en' : 'tempo_notes';
+  document.getElementById('tempo-notes').innerHTML = (data.story[tnKey] || data.story.tempo_notes).map(txt => `<div class="note"><i class="fa-solid fa-clock"></i><div>${txt}</div></div>`).join('');
 }
 
 function renderToolRanking(){
@@ -1496,8 +1499,8 @@ function renderCommandSuccessChart(){
     xAxis: {type: 'category', data: rows.map(row => row.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
     yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
     series: [
-      {name: 'Success', type: 'line', smooth: true, areaStyle: {color: 'rgba(81,207,102,.2)'}, itemStyle: {color: '#51cf66'}, lineStyle: {width: 3, color: '#51cf66'}, data: rows.map(row => row.successes)},
-      {name: 'Fail', type: 'line', smooth: true, areaStyle: {color: 'rgba(255,107,107,.16)'}, itemStyle: {color: '#ff6b6b'}, lineStyle: {width: 3, color: '#ff6b6b'}, data: rows.map(row => row.failures)}
+      {name: t('seriesSuccess'), type: 'line', smooth: true, areaStyle: {color: 'rgba(81,207,102,.2)'}, itemStyle: {color: '#51cf66'}, lineStyle: {width: 3, color: '#51cf66'}, data: rows.map(row => row.successes)},
+      {name: t('seriesFail'), type: 'line', smooth: true, areaStyle: {color: 'rgba(255,107,107,.16)'}, itemStyle: {color: '#ff6b6b'}, lineStyle: {width: 3, color: '#ff6b6b'}, data: rows.map(row => row.failures)}
     ]
   });
 }
@@ -1516,9 +1519,9 @@ function renderEfficiencyChart(){
       {type: 'value', splitLine: {show: false}, axisLabel: {color: TX, formatter: value => fmtShort(value)}}
     ],
     series: [
-      {name: 'Reasoning Ratio', type: 'line', smooth: true, itemStyle: {color: C.reason}, lineStyle: {width: 3, color: C.reason}, data: rows.map(row => row.reasoning_ratio)},
-      {name: 'Cache Hit Rate', type: 'line', smooth: true, itemStyle: {color: C.cacheRead}, lineStyle: {width: 3, color: C.cacheRead}, data: rows.map(row => row.cache_hit_rate)},
-      {name: 'Tokens / Message', type: 'line', yAxisIndex: 1, smooth: true, itemStyle: {color: C.output}, lineStyle: {width: 3, color: C.output}, data: rows.map(row => row.tokens_per_message)}
+      {name: t('seriesReasonRatio'), type: 'line', smooth: true, itemStyle: {color: C.reason}, lineStyle: {width: 3, color: C.reason}, data: rows.map(row => row.reasoning_ratio)},
+      {name: t('seriesCacheHitRate'), type: 'line', smooth: true, itemStyle: {color: C.cacheRead}, lineStyle: {width: 3, color: C.cacheRead}, data: rows.map(row => row.cache_hit_rate)},
+      {name: t('seriesTokensPerMsg'), type: 'line', yAxisIndex: 1, smooth: true, itemStyle: {color: C.output}, lineStyle: {width: 3, color: C.output}, data: rows.map(row => row.tokens_per_message)}
     ]
   });
 }
@@ -1590,7 +1593,7 @@ function renderProductivityChart(){
     xAxis: {type: 'category', data: rows.map(row => row.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
     yAxis: {type: 'value', min: 0, max: 1, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
     series: [{
-      name: 'Productivity',
+      name: t('seriesProductivity'),
       type: 'line',
       smooth: true,
       symbolSize: 8,
@@ -1620,8 +1623,8 @@ function renderBurnRateChart(){
     xAxis: {type: 'category', data: labels, axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
     yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtUSD(value)}},
     series: [
-      {name: 'Actual Cumulative', type: 'line', smooth: true, symbolSize: 6, lineStyle: {width: 3, color: '#74c0fc'}, itemStyle: {color: '#74c0fc'}, data: actualSeries},
-      {name: 'Projected Cumulative', type: 'line', smooth: true, symbolSize: 6, lineStyle: {width: 3, type: 'dashed', color: '#ff8a50'}, itemStyle: {color: '#ff8a50'}, data: projectedSeries}
+      {name: t('seriesActualCum'), type: 'line', smooth: true, symbolSize: 6, lineStyle: {width: 3, color: '#74c0fc'}, itemStyle: {color: '#74c0fc'}, data: actualSeries},
+      {name: t('seriesProjCum'), type: 'line', smooth: true, symbolSize: 6, lineStyle: {width: 3, type: 'dashed', color: '#ff8a50'}, itemStyle: {color: '#ff8a50'}, data: projectedSeries}
     ]
   });
 }
@@ -1673,11 +1676,11 @@ function renderModelRadarChart(){
       splitLine: {lineStyle: {color: AX}},
       splitArea: {areaStyle: {color: ['rgba(255,255,255,.02)','rgba(255,255,255,.01)']}},
       indicator: [
-        {name: 'Input', max: 1},
-        {name: 'Output', max: 1},
-        {name: 'Cache', max: 1},
-        {name: 'Cost', max: 1},
-        {name: 'Msgs', max: 1}
+        {name: t('radarInput'), max: 1},
+        {name: t('radarOutput'), max: 1},
+        {name: t('radarCache'), max: 1},
+        {name: t('radarCost'), max: 1},
+        {name: t('radarMsgs'), max: 1}
       ]
     },
     series: [{
@@ -1752,8 +1755,8 @@ function renderTaskRateChart(){
       type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'],
       label: {color: TX, formatter: '{b}: {c} ({d}%)'},
       data: [
-        {value: te.completed, name: 'Completed', itemStyle: {color: '#51cf66'}},
-        {value: failed, name: 'Incomplete', itemStyle: {color: '#ff6b6b'}}
+        {value: te.completed, name: t('lblCompleted'), itemStyle: {color: '#51cf66'}},
+        {value: failed, name: t('lblIncomplete'), itemStyle: {color: '#ff6b6b'}}
       ]
     }]
   });
@@ -1810,10 +1813,10 @@ function renderAiContributionChart(){
       type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'],
       label: {color: TX, formatter: '{b}\\n{c} lines ({d}%)'},
       data: [
-        {value: ai.ai_lines_added, name: 'AI Added', itemStyle: {color: '#74c0fc'}},
-        {value: ai.human_lines_added, name: 'Human Added', itemStyle: {color: '#ffd43b'}},
-        {value: ai.ai_lines_deleted, name: 'AI Deleted', itemStyle: {color: '#b197fc'}},
-        {value: ai.human_lines_deleted, name: 'Human Deleted', itemStyle: {color: '#ff6b6b'}}
+        {value: ai.ai_lines_added, name: t('lblAiAdded'), itemStyle: {color: '#74c0fc'}},
+        {value: ai.human_lines_added, name: t('lblHumanAdded'), itemStyle: {color: '#ffd43b'}},
+        {value: ai.ai_lines_deleted, name: t('lblAiDeleted'), itemStyle: {color: '#b197fc'}},
+        {value: ai.human_lines_deleted, name: t('lblHumanDeleted'), itemStyle: {color: '#ff6b6b'}}
       ].filter(d => d.value > 0)
     }]
   });
@@ -1822,13 +1825,13 @@ function renderAiContributionChart(){
 function renderSessionTable(){
   document.getElementById('session-table').innerHTML = `
     <thead>
-      <tr><th>Source</th><th>Session</th><th>Tokens</th><th>Cost</th><th>Tools</th><th>Model</th><th>Window</th></tr>
+      <tr><th>${t('tblSource')}</th><th>${t('tblSession')}</th><th>${t('tblTokens')}</th><th>${t('tblCost')}</th><th>${t('tblTools')}</th><th>${t('tblModel')}</th><th>${t('tblWindow')}</th></tr>
     </thead>
     <tbody>
       ${data.top_sessions.map(row => `
         <tr>
-          <td><strong style="color:var(--text)">${row.source}</strong><div class="tiny">${fmtInt(row.messages)} events</div></td>
-          <td><strong style="color:var(--text)">${row.session_id.slice(0, 10)}…</strong><div class="tiny">${row.minutes} min</div></td>
+          <td><strong style="color:var(--text)">${row.source}</strong><div class="tiny">${t('tblEvents', {n: fmtInt(row.messages)})}</div></td>
+          <td><strong style="color:var(--text)">${row.session_id.slice(0, 10)}…</strong><div class="tiny">${t('tblMin', {n: row.minutes})}</div></td>
           <td>${fmtShort(row.total)}</td>
           <td style="color:var(--cost);font-weight:700">${fmtUSD(row.cost)}</td>
           <td>${fmtInt(row.tool_calls)}</td>
@@ -1843,6 +1846,19 @@ function renderDashboard(){
   if (!data || !data.totals) {
     return;
   }
+  /* Apply i18n to data-i18n elements */
+  applyI18n();
+  /* Token legend */
+  const legendEl = document.getElementById('token-legend');
+  if (legendEl) legendEl.innerHTML = [
+    `<span><i class="dot" style="background:var(--uncached)"></i>${t('legendUncached')}</span>`,
+    `<span><i class="dot" style="background:var(--cache-read)"></i>${t('legendCacheRead')}</span>`,
+    `<span><i class="dot" style="background:var(--cache-write)"></i>${t('legendCacheWrite')}</span>`,
+    `<span><i class="dot" style="background:var(--output)"></i>${t('legendOutputReason')}</span>`
+  ].join('');
+  /* Footer */
+  const footerEl = document.getElementById('footer-text');
+  if (footerEl) footerEl.innerHTML = t('footerText');
   /* DOM-only sections render immediately */
   renderHero();
   renderSourceCards();
@@ -1900,11 +1916,11 @@ function renderDashboard(){
 function renderRangeTabs(){
   const el = document.getElementById('range-tabs');
   if (!el) return;
-  const allLabel = defaultSince ? `从 ${defaultSince}` : `${defaultDays} 天`;
+  const allLabel = defaultSince ? t('rangeFrom', {since: defaultSince}) : t('rangeDays', {days: defaultDays});
   const tabs = [
     {key: 'all', label: allLabel},
-    {key: 'week', label: '近 7 天'},
-    {key: 'today', label: '今日'}
+    {key: 'week', label: t('rangeWeek')},
+    {key: 'today', label: t('rangeToday')}
   ];
   el.innerHTML = tabs.map(t =>
     `<button class="range-tab${t.key === activeRangeKey ? ' active' : ''}" data-range="${t.key}">${t.label}</button>`
@@ -1940,12 +1956,15 @@ async function switchRange(key){
         renderDashboard();
       }
     } catch (e) {
-      showToast('切换失败: ' + (e.message || e), 'err', 3000);
+      showToast(t('toastSwitchFail', {err: e.message || e}), 'err', 3000);
     }
   }
 }
 
 function bootDashboard(){
+  document.getElementById('lang-btn').textContent = '\\u{1F310} ' + lang.toUpperCase();
+  applyI18n();
+  document.getElementById('hero-title').textContent = t('heroTitle');
   renderRangeTabs();
   if (data && data.totals) {
     if (!isLiveMode) updateLiveBadge('off');
@@ -1954,7 +1973,7 @@ function bootDashboard(){
   }
   if (!isLiveMode) {
     updateLiveBadge('off');
-    document.getElementById('hero-copy').textContent = '缺少可用数据。';
+    document.getElementById('hero-copy').textContent = t('heroNoData');
     return;
   }
   startSseDashboard();

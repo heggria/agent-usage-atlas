@@ -57,15 +57,24 @@ Agent Usage Atlas reads your local log files (`~/.codex/`, `~/.claude/`, `~/.cur
 
 ## Installation
 
+### pip (recommended)
+
 ```bash
-# Clone and run directly
+pip install agent-usage-atlas
+```
+
+### Homebrew
+
+```bash
+brew install heggria/tap/agent-usage-atlas
+```
+
+### From source
+
+```bash
 git clone https://github.com/heggria/agent-usage-atlas.git
 cd agent-usage-atlas
-python -m agent_usage_atlas
-
-# Or install as a CLI tool
 pip install .
-agent-usage-atlas
 ```
 
 ## Usage
