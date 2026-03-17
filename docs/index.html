@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Usage Atlas — AI Coding Agent Analytics Dashboard</title>
+<meta name="description" content="Turn your local AI coding agent logs into a rich, interactive analytics dashboard. Supports Claude Code, Codex CLI, and Cursor. Zero dependencies, fully offline, one command.">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1016;
+  --surface:rgba(255,255,255,.04);
+  --surface-strong:rgba(255,255,255,.07);
+  --border:rgba(255,255,255,.08);
+  --text:#ece7df;
+  --text-secondary:rgba(255,255,255,.7);
+  --text-muted:rgba(255,255,255,.42);
+  --accent:#f0b866;
+  --codex:#ff8a50;
+  --claude:#ffd43b;
+  --cursor:#748ffc;
+  --radius:14px;
+  --radius-sm:8px;
+}
+body{
+  min-height:100vh;
+  color:var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(255,138,80,.16), transparent 26%),
+    radial-gradient(circle at top right, rgba(116,192,252,.12), transparent 24%),
+    linear-gradient(180deg, #131722 0%, #0d1016 58%, #0b0d12 100%);
+  font:16px/1.6 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.page{max-width:1100px;margin:0 auto;padding:48px 20px 80px}
+
+/* Hero */
+.hero{text-align:center;padding:60px 0 48px}
+.hero h1{font-size:2.8rem;font-weight:700;letter-spacing:-.02em;margin-bottom:12px}
+.hero h1 span{color:var(--accent)}
+.hero .tagline{font-size:1.15rem;color:var(--text-secondary);max-width:680px;margin:0 auto 32px}
+.badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:36px}
+.badges img{height:22px}
+
+/* Buttons */
+.actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:16px}
+.btn{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:12px 28px;border-radius:var(--radius-sm);
+  font-size:.95rem;font-weight:600;
+  transition:all .2s;cursor:pointer;border:none;
+}
+.btn-primary{
+  background:linear-gradient(135deg,var(--accent),#e8a838);
+  color:#0d1016;
+}
+.btn-primary:hover{filter:brightness(1.1);text-decoration:none}
+.btn-secondary{
+  background:var(--surface-strong);
+  color:var(--text);border:1px solid var(--border);
+}
+.btn-secondary:hover{background:rgba(255,255,255,.1);text-decoration:none}
+.btn svg{width:18px;height:18px;fill:currentColor}
+
+/* Install block */
+.install-block{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:32px;margin:48px auto;max-width:700px;
+}
+.install-block h2{font-size:1.3rem;margin-bottom:20px;text-align:center}
+.install-method{margin-bottom:16px}
+.install-method:last-child{margin-bottom:0}
+.install-label{
+  font-size:.8rem;font-weight:600;
+  color:var(--text-muted);text-transform:uppercase;
+  letter-spacing:.06em;margin-bottom:6px;
+}
+.install-cmd{
+  background:rgba(0,0,0,.4);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:12px 16px;font-family:"SF Mono",Monaco,Consolas,monospace;
+  font-size:.9rem;color:var(--accent);
+  user-select:all;overflow-x:auto;
+}
+
+/* Features */
+.features{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:16px;margin:48px 0;
+}
+.feature{
+  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.025));
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:24px;
+}
+.feature .icon{font-size:1.5rem;margin-bottom:10px}
+.feature h3{font-size:1rem;font-weight:600;margin-bottom:6px}
+.feature p{font-size:.88rem;color:var(--text-secondary);line-height:1.5}
+
+/* Agents table */
+.agents{margin:48px 0}
+.agents h2{font-size:1.5rem;font-weight:700;text-align:center;margin-bottom:20px}
+.agent-grid{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.agent-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:20px 28px;
+  text-align:center;min-width:200px;
+}
+.agent-card .name{font-size:1.05rem;font-weight:600;margin-bottom:4px}
+.agent-card .detail{font-size:.82rem;color:var(--text-muted)}
+.agent-card.codex{border-top:3px solid var(--codex)}
+.agent-card.claude{border-top:3px solid var(--claude)}
+.agent-card.cursor{border-top:3px solid var(--cursor)}
+
+/* Screenshots */
+.screenshots{margin:56px 0}
+.screenshots h2{font-size:1.5rem;font-weight:700;text-align:center;margin-bottom:24px}
+.screenshot-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.screenshot-item{position:relative;overflow:hidden;border-radius:var(--radius);border:1px solid var(--border)}
+.screenshot-item img{width:100%;display:block;transition:transform .3s}
+.screenshot-item:hover img{transform:scale(1.02)}
+.screenshot-item .caption{
+  padding:10px 14px;
+  background:var(--surface);
+  font-size:.85rem;font-weight:600;
+}
+.screenshot-item .caption span{
+  display:block;font-weight:400;font-size:.78rem;
+  color:var(--text-muted);margin-top:2px;
+}
+.hero-screenshot{
+  margin:0 auto 48px;max-width:900px;
+  border-radius:var(--radius);overflow:hidden;
+  border:1px solid var(--border);
+  box-shadow:0 24px 80px rgba(0,0,0,.4);
+}
+.hero-screenshot img{width:100%;display:block}
+
+/* Footer */
+.footer{
+  text-align:center;padding:40px 0 0;
+  border-top:1px solid var(--border);
+  margin-top:56px;
+}
+.footer p{color:var(--text-muted);font-size:.85rem}
+
+/* Responsive */
+@media(max-width:700px){
+  .hero h1{font-size:1.8rem}
+  .hero .tagline{font-size:1rem}
+  .screenshot-grid{grid-template-columns:1fr}
+  .features{grid-template-columns:1fr}
+  .page{padding:24px 16px 60px}
+  .hero{padding:32px 0 28px}
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <section class="hero">
+    <h1><span>Agent Usage Atlas</span></h1>
+    <p class="tagline">Turn your local AI coding agent logs into a rich, interactive analytics dashboard &mdash; zero dependencies, fully offline, one command.</p>
+    <div class="badges">
+      <a href="https://pypi.org/project/agent-usage-atlas/"><img src="https://img.shields.io/pypi/v/agent-usage-atlas?style=flat-square&color=f0b866" alt="PyPI version"></a>
+      <a href="https://pypi.org/project/agent-usage-atlas/"><img src="https://img.shields.io/pypi/pyversions/agent-usage-atlas?style=flat-square&color=748ffc" alt="Python versions"></a>
+      <a href="https://github.com/heggria/agent-usage-atlas/blob/main/LICENSE"><img src="https://img.shields.io/github/license/heggria/agent-usage-atlas?style=flat-square&color=51cf66" alt="License"></a>
+    </div>
+    <div class="actions">
+      <a href="https://pypi.org/project/agent-usage-atlas/" class="btn btn-primary">
+        <svg viewBox="0 0 24 24"><path d="M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8z"/></svg>
+        Install from PyPI
+      </a>
+      <a href="https://github.com/heggria/agent-usage-atlas" class="btn btn-secondary">
+        <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+  </section>
+
+  <div class="hero-screenshot">
+    <img src="screenshots/hero-overview.png" alt="Agent Usage Atlas Dashboard Overview" loading="lazy">
+  </div>
+
+  <div class="install-block">
+    <h2>Get Started</h2>
+    <div class="install-method">
+      <div class="install-label">pip (recommended)</div>
+      <div class="install-cmd">pip install agent-usage-atlas</div>
+    </div>
+    <div class="install-method">
+      <div class="install-label">Homebrew</div>
+      <div class="install-cmd">brew install heggria/tap/agent-usage-atlas</div>
+    </div>
+    <div class="install-method">
+      <div class="install-label">Then run</div>
+      <div class="install-cmd">agent-usage-atlas</div>
+    </div>
+  </div>
+
+  <section class="agents">
+    <h2>Supported Agents</h2>
+    <div class="agent-grid">
+      <div class="agent-card codex">
+        <div class="name">Codex CLI</div>
+        <div class="detail">GPT-5 family &middot; Full tracking</div>
+      </div>
+      <div class="agent-card claude">
+        <div class="name">Claude Code</div>
+        <div class="detail">Claude 3&ndash;4.6 &middot; Full tracking</div>
+      </div>
+      <div class="agent-card cursor">
+        <div class="name">Cursor</div>
+        <div class="detail">Activity counts</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="feature">
+      <div class="icon">&#x1F4CA;</div>
+      <h3>25+ Interactive Charts</h3>
+      <p>Cost trends, token breakdowns, Sankey flows, chord diagrams, heatmaps, radar charts, calendar views, burn rate projections.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#x1F4B0;</div>
+      <h3>Cost Analytics</h3>
+      <p>Per-model, per-day, per-session cost estimation with 30-day burn rate forecasting and cache efficiency tracking.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#x1F527;</div>
+      <h3>Tool Call Intelligence</h3>
+      <p>Ranking, frequency density, bigram sequences, command success rates, and tool usage chord diagrams.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#x26A1;</div>
+      <h3>Live Dashboard</h3>
+      <p>SSE-powered auto-refresh server with date range tabs. Animated green/red flash on number changes.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#x1F4E6;</div>
+      <h3>Zero Dependencies</h3>
+      <p>Pure Python standard library. No npm, Node, Rust, or Docker required. Single self-contained HTML output.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#x1F512;</div>
+      <h3>Fully Local</h3>
+      <p>All data stays on your machine. Reads from ~/.codex/, ~/.claude/, ~/.cursor/ &mdash; nothing sent anywhere.</p>
+    </div>
+  </section>
+
+  <section class="screenshots">
+    <h2>Dashboard Views</h2>
+    <div class="screenshot-grid">
+      <div class="screenshot-item">
+        <img src="screenshots/cost-charts.png" alt="Cost Analysis" loading="lazy">
+        <div class="caption">Cost Analysis<span>Daily cost trends, cost breakdown by token type, model cost ranking, Sankey flow</span></div>
+      </div>
+      <div class="screenshot-item">
+        <img src="screenshots/token-charts.png" alt="Token &amp; Activity" loading="lazy">
+        <div class="caption">Token &amp; Activity<span>Daily token trends, source radar, narrative summary, rose chart</span></div>
+      </div>
+      <div class="screenshot-item">
+        <img src="screenshots/heatmap-sessions.png" alt="Heatmap &amp; Sessions" loading="lazy">
+        <div class="caption">Heatmap &amp; Sessions<span>Activity heatmap, source radar, token calendar, session bubble</span></div>
+      </div>
+      <div class="screenshot-item">
+        <img src="screenshots/tool-charts.png" alt="Tool Intelligence" loading="lazy">
+        <div class="caption">Tool Intelligence<span>Tool ranking, bigram chord diagram, top commands, efficiency metrics</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p><a href="https://github.com/heggria/agent-usage-atlas">Agent Usage Atlas</a> &middot; MIT License &middot; Made with Python</p>
+  </footer>
+
+</div>
+</body>
+</html>
