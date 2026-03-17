@@ -191,10 +191,15 @@ def parse(start_utc, now_utc) -> ParseResult:
                                     text_parts.append(blk)
                         full_text = " ".join(text_parts).strip()
                         if full_text:
-                            user_messages.append(UserMessage(
-                                "Codex", ts, s,
-                                full_text[:200], len(full_text),
-                            ))
+                            user_messages.append(
+                                UserMessage(
+                                    "Codex",
+                                    ts,
+                                    s,
+                                    full_text[:200],
+                                    len(full_text),
+                                )
+                            )
 
                 elif pl_type in ("task_started", "task_complete"):
                     if start_utc <= ts <= now_utc:

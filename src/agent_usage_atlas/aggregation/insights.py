@@ -52,8 +52,7 @@ def _marathon_sessions(ctx, _pd) -> dict | None:
         "title_en": f"{len(long_sessions)} marathon session(s) detected",
         "body": f"最长会话持续 {hours} 小时。长时间连续使用可能导致上下文膨胀和效率下降。",
         "body_en": (
-            f"Longest session lasted {hours}h. Extended sessions may cause "
-            "context bloat and reduced efficiency."
+            f"Longest session lasted {hours}h. Extended sessions may cause context bloat and reduced efficiency."
         ),
         "action": "考虑将大任务拆分为多个短会话，每个聚焦一个目标。",
         "action_en": "Consider splitting large tasks into shorter, focused sessions.",
@@ -124,6 +123,7 @@ def _vague_prompt_waste(ctx, pd) -> dict | None:
     pct = round(ratio * 100, 1)
     wasted = pd.get("estimated_wasted_cost", 0)
     from ..models import fmt_usd
+
     return {
         "severity": "high",
         "icon": "fa-comment-slash",
@@ -197,6 +197,7 @@ def _budget_alert(ctx, _pd) -> dict | None:
     if projection <= 100:
         return None
     from ..models import fmt_usd
+
     return {
         "severity": "high",
         "icon": "fa-fire",

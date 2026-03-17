@@ -89,6 +89,7 @@ _TOOLS = [
 
 def _get_payload(days: int) -> dict:
     from ..cli import build_dashboard_payload
+
     return build_dashboard_payload(days=days)
 
 
@@ -155,10 +156,7 @@ def _handle_model_usage(args: dict) -> str:
     model_costs = totals.get("model_cost_breakdown", [])
     lines = [f"Model usage for the last {days} days:", ""]
     for mc in model_costs:
-        lines.append(
-            f"  {mc['model']}: ${mc['cost']:.4f}  "
-            f"({mc.get('messages', 0)} messages)"
-        )
+        lines.append(f"  {mc['model']}: ${mc['cost']:.4f}  ({mc.get('messages', 0)} messages)")
     lines.append("")
     lines.append(f"Grand total: ${totals.get('grand_cost', 0):.2f}")
     return "\n".join(lines)
@@ -207,13 +205,18 @@ def run(args) -> None:
             continue
 
         if method == "initialize":
-            _send(_make_response(req_id, {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {},
-                },
-                "serverInfo": _SERVER_INFO,
-            }))
+            _send(
+                _make_response(
+                    req_id,
+                    {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {},
+                        },
+                        "serverInfo": _SERVER_INFO,
+                    },
+                )
+            )
 
         elif method == "tools/list":
             _send(_make_response(req_id, {"tools": _TOOLS}))
@@ -227,9 +230,14 @@ def run(args) -> None:
             else:
                 try:
                     text = handler(tool_args)
-                    _send(_make_response(req_id, {
-                        "content": [{"type": "text", "text": text}],
-                    }))
+                    _send(
+                        _make_response(
+                            req_id,
+                            {
+                                "content": [{"type": "text", "text": text}],
+                            },
+                        )
+                    )
                 except Exception as e:
                     _send(_make_error(req_id, -32603, str(e)))
 

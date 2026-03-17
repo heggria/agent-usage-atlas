@@ -84,10 +84,15 @@ def parse(start_utc, now_utc) -> ParseResult:
                                 text_parts.append(blk)
                     full_text = " ".join(text_parts).strip()
                     if full_text:
-                        user_messages.append(UserMessage(
-                            "Claude", ts, sid,
-                            full_text[:200], len(full_text),
-                        ))
+                        user_messages.append(
+                            UserMessage(
+                                "Claude",
+                                ts,
+                                sid,
+                                full_text[:200],
+                                len(full_text),
+                            )
+                        )
 
             if obj_type == "system" and obj.get("subtype") == "turn_duration":
                 dur = obj.get("durationMs")

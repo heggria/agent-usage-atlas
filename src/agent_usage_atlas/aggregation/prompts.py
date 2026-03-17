@@ -4,14 +4,48 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-VAGUE_SET = frozenset({
-    "yes", "no", "ok", "y", "n", "sure", "go", "do it", "fix it",
-    "continue", "go ahead", "try again", "looks good", "lgtm",
-    "please", "thanks", "retry", "again", "run it", "proceed",
-    "k", "yep", "yea", "yeah", "nope", "nah", "fine", "done",
-    "next", "correct", "right", "good", "great", "nice",
-    "sounds good", "that works", "perfect", "exactly",
-})
+VAGUE_SET = frozenset(
+    {
+        "yes",
+        "no",
+        "ok",
+        "y",
+        "n",
+        "sure",
+        "go",
+        "do it",
+        "fix it",
+        "continue",
+        "go ahead",
+        "try again",
+        "looks good",
+        "lgtm",
+        "please",
+        "thanks",
+        "retry",
+        "again",
+        "run it",
+        "proceed",
+        "k",
+        "yep",
+        "yea",
+        "yeah",
+        "nope",
+        "nah",
+        "fine",
+        "done",
+        "next",
+        "correct",
+        "right",
+        "good",
+        "great",
+        "nice",
+        "sounds good",
+        "that works",
+        "perfect",
+        "exactly",
+    }
+)
 
 _MAX_VAGUE_LEN = 30
 _MIN_VAGUE_LEN = 5
@@ -61,15 +95,17 @@ def compute(ctx) -> dict:
         if paired_event:
             response_tokens = paired_event.output + paired_event.reasoning
             response_cost = paired_event.cost
-            prompt_costs.append({
-                "text": msg.text,
-                "tokens": response_tokens,
-                "cost": response_cost,
-                "model": paired_event.model,
-                "source": msg.source,
-                "timestamp": msg.timestamp.isoformat(timespec="minutes"),
-                "is_vague": is_v,
-            })
+            prompt_costs.append(
+                {
+                    "text": msg.text,
+                    "tokens": response_tokens,
+                    "cost": response_cost,
+                    "model": paired_event.model,
+                    "source": msg.source,
+                    "timestamp": msg.timestamp.isoformat(timespec="minutes"),
+                    "is_vague": is_v,
+                }
+            )
 
     # Compute estimated waste from vague prompts
     vague_costs = [p for p in prompt_costs if p["is_vague"]]
@@ -79,10 +115,7 @@ def compute(ctx) -> dict:
     vague_ratio = vague_count / total_user_messages if total_user_messages else 0.0
 
     # Top vague prompts by frequency
-    top_vague = [
-        {"text": text, "count": count}
-        for text, count in vague_counter.most_common(20)
-    ]
+    top_vague = [{"text": text, "count": count} for text, count in vague_counter.most_common(20)]
 
     # Expensive prompts (top 50 by cost, exclude vague)
     expensive = sorted(prompt_costs, key=lambda p: p["cost"], reverse=True)[:50]
