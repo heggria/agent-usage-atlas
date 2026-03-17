@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """HTTP service for the live dashboard."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,19 +9,19 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
 import sys
 import threading
-from datetime import datetime
-from pathlib import Path
-import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
 import time
+import webbrowser
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
+from .builder import build_html
 from .cli import build_dashboard_payload
-from .template import build_html
 from .parsers import CLAUDE_ROOT, CODEX_ROOTS, CURSOR_ROOT
-
 
 _PAYLOAD_CACHE: dict[tuple[int, str | None], tuple[dict, str, tuple[int, int, int]]] = {}
 _PAYLOAD_LOCK = threading.Lock()
@@ -117,10 +118,32 @@ def _cached_payload(days: int, since: str | None) -> tuple[dict, str]:
     return payload, etag
 
 
+def _log(address: str, fmt: str, *args: object) -> None:
+    """Print a log line matching BaseHTTPRequestHandler.log_message format."""
+    ts = datetime.now().strftime("%d/%b/%Y %H:%M:%S")
+    message = fmt % args if args else fmt
+    sys.stderr.write(f"{address} - - [{ts}] {message}\n")
+
+
+class _ReuseAddrServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     default_days: int = 30
     default_since: str | None = None
     default_interval: int = 5
+
+    def handle(self) -> None:
+        """Suppress ConnectionResetError from browser closing SSE / refreshing."""
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+        # Suppress noisy default logging for SSE reconnects; keep normal request logs
+        super().log_message(format, *args)
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler API
         parsed = urlparse(self.path)
@@ -133,11 +156,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/dashboard/stream":
             self._write_stream(parsed.query)
             return
-        if parsed.path in {"/favicon.ico", "/health"}:
-            if parsed.path == "/health":
-                self._write_json({"status": "ok"})
-                return
-            self.send_error(404)
+        if parsed.path == "/health":
+            self._write_json({"status": "ok"})
+            return
+        if parsed.path == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
             return
         self.send_error(404, "Not Found")
 
@@ -222,18 +246,84 @@ _LOCK_FILE = Path.home() / ".cache" / "agent-usage-atlas" / "server.lock"
 _lock_fp = None
 
 
-def _acquire_lock() -> None:
-    """Acquire an exclusive file lock to ensure only one server instance runs."""
+def _kill_pid(pid: int) -> bool:
+    """Send SIGTERM to *pid* and wait for it to exit. Returns True if killed."""
+    if pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    for _ in range(30):
+        time.sleep(0.1)
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            print(f"Stopped previous server (PID {pid}).", file=sys.stderr)
+            return True
+    # Still alive — force kill
+    try:
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.2)
+        print(f"Force-stopped previous server (PID {pid}).", file=sys.stderr)
+    except OSError:
+        pass
+    return True
+
+
+def _kill_port_holder(port: int) -> None:
+    """Find and kill whatever process is listening on *port*."""
+    import subprocess
+
+    try:
+        out = subprocess.check_output(
+            ["lsof", "-ti", f":{port}"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    for line in out.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        _kill_pid(pid)
+
+
+def _acquire_lock(port: int) -> None:
+    """Acquire an exclusive file lock; kill any existing server first."""
     global _lock_fp
     _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _lock_fp = open(_LOCK_FILE, "w")  # noqa: SIM115
+    _lock_fp = open(_LOCK_FILE, "r+") if _LOCK_FILE.exists() else open(_LOCK_FILE, "w")  # noqa: SIM115
     try:
         fcntl.flock(_lock_fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
+        # Lock held — read PID from file and kill
+        _lock_fp.seek(0)
+        try:
+            old_pid = int(_lock_fp.read().strip())
+            _kill_pid(old_pid)
+        except (ValueError, OSError):
+            pass
         _lock_fp.close()
         _lock_fp = None
-        print("Error: another Agent Usage Atlas server is already running.", file=sys.stderr)
-        sys.exit(1)
+        time.sleep(0.3)
+        _lock_fp = open(_LOCK_FILE, "w")  # noqa: SIM115
+        try:
+            fcntl.flock(_lock_fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            _lock_fp.close()
+            _lock_fp = None
+            print("Error: could not stop the previous server.", file=sys.stderr)
+            sys.exit(1)
+
+    # Even with the lock, the port might be held by a stale process
+    _kill_port_holder(port)
+    time.sleep(0.2)
+
+    _lock_fp.seek(0)
+    _lock_fp.truncate()
     _lock_fp.write(str(os.getpid()))
     _lock_fp.flush()
     atexit.register(_release_lock)
@@ -259,7 +349,7 @@ def run_server(
     interval: int = 5,
     open_browser: bool = False,
 ) -> None:
-    _acquire_lock()
+    _acquire_lock(port)
 
     if since:
         datetime.strptime(since, "%Y-%m-%d")
@@ -269,11 +359,11 @@ def run_server(
 
     _cached_payload(days=days, since=since)
 
-    server = ThreadingHTTPServer((host, port), DashboardHandler)
+    server = _ReuseAddrServer((host, port), DashboardHandler)
     url = f"http://{host}:{port}"
-    print(f"Agent Usage Atlas dashboard server running at {url}")
-    print(f"JSON: {url}/api/dashboard")
-    print(f"SSE:  {url}/api/dashboard/stream?interval={interval}")
+    _log(host, "Agent Usage Atlas dashboard server running at %s", url)
+    _log(host, "JSON: %s/api/dashboard", url)
+    _log(host, "SSE:  %s/api/dashboard/stream?interval=%d", url, interval)
 
     if open_browser:
         webbrowser.open(url)

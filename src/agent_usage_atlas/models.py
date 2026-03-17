@@ -1,18 +1,29 @@
 """Data classes and pricing for agent usage tracking."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
+from typing import NamedTuple
 
-# Model pricing (USD / 1M tokens): {model: (input, cache_read, cache_write, output, reasoning)}
-_S = (3, .3, 3.75, 15, 15)
-_O = (15, 1.5, 18.75, 75, 75)
-_H = (.8, .08, 1, 4, 4)
-_OH = (5, .5, 6.25, 25, 25)
-_G5 = (2.5, .25, 0, 15, 15)
-_G5M = (1.1, .275, 0, 4.4, 4.4)
-_MM = (.29, .029, .36, 1.16, 1.16)  # MiniMax CNY÷7.25
+
+class PricingTier(NamedTuple):
+    input: float
+    cache_read: float
+    cache_write: float
+    output: float
+    reasoning: float
+
+
+# Model pricing (USD / 1M tokens)
+_S = PricingTier(3, 0.3, 3.75, 15, 15)
+_O = PricingTier(15, 1.5, 18.75, 75, 75)
+_H = PricingTier(0.8, 0.08, 1, 4, 4)
+_OH = PricingTier(5, 0.5, 6.25, 25, 25)
+_G5 = PricingTier(2.5, 0.25, 0, 15, 15)
+_G5M = PricingTier(1.1, 0.275, 0, 4.4, 4.4)
+_MM = PricingTier(0.29, 0.029, 0.36, 1.16, 1.16)  # MiniMax CNY÷7.25
 
 _P = {
     # MiniMax family
@@ -31,14 +42,21 @@ _P = {
     "gpt-5-codex": _G5,
     "gpt-5": _G5,
     # Anthropic Claude family
-    "claude-opus-4-6": _OH, "claude-sonnet-4-6": _S,
-    "claude-opus-4-5": _OH, "claude-sonnet-4-5": _S,
-    "claude-opus-4-1": _O, "claude-opus-4-0": _O, "claude-opus-4-2": _O,
-    "claude-sonnet-4-0": _S, "claude-sonnet-4-2": _S,
-    "claude-haiku-4-5": (1, .1, 1.25, 5, 5),
+    "claude-opus-4-6": _OH,
+    "claude-sonnet-4-6": _S,
+    "claude-opus-4-5": _OH,
+    "claude-sonnet-4-5": _S,
+    "claude-opus-4-1": _O,
+    "claude-opus-4-0": _O,
+    "claude-opus-4-2": _O,
+    "claude-sonnet-4-0": _S,
+    "claude-sonnet-4-2": _S,
+    "claude-haiku-4-5": PricingTier(1, 0.1, 1.25, 5, 5),
     "claude-haiku-3-5": _H,
-    "claude-3-haiku": (.25, .03, .3, 1.25, 1.25),
-    "claude-3-5-sonnet": _S, "claude-3-5-haiku": _H, "claude-3-opus": _O,
+    "claude-3-haiku": PricingTier(0.25, 0.03, 0.3, 1.25, 1.25),
+    "claude-3-5-sonnet": _S,
+    "claude-3-5-haiku": _H,
+    "claude-3-opus": _O,
 }
 
 
@@ -80,8 +98,13 @@ class UsageEvent:
     @property
     def cost(self):
         p = self._pricing
-        return (self.uncached_input * p[0] + self.cache_read * p[1] + self.cache_write * p[2]
-                + self.output * p[3] + self.reasoning * p[4]) / 1e6
+        return (
+            self.uncached_input * p[0]
+            + self.cache_read * p[1]
+            + self.cache_write * p[2]
+            + self.output * p[3]
+            + self.reasoning * p[4]
+        ) / 1e6
 
     @property
     def cost_breakdown(self):
@@ -156,8 +179,42 @@ class ScoredCommit:
     tab_deleted: int = 0
 
 
+@dataclass
+class ParseResult:
+    events: list[UsageEvent] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    session_metas: list[SessionMeta] = field(default_factory=list)
+    turn_durations: list[TurnDuration] = field(default_factory=list)
+    task_events: list[TaskEvent] = field(default_factory=list)
+    code_gen: list[CodeGenRecord] = field(default_factory=list)
+    scored_commits: list[ScoredCommit] = field(default_factory=list)
+
+    def merge(self, other: ParseResult) -> None:
+        self.events.extend(other.events)
+        self.tool_calls.extend(other.tool_calls)
+        self.session_metas.extend(other.session_metas)
+        self.turn_durations.extend(other.turn_durations)
+        self.task_events.extend(other.task_events)
+        self.code_gen.extend(other.code_gen)
+        self.scored_commits.extend(other.scored_commits)
+
+
 # Formatting helpers
-fmt_int = lambda v: f"{v:,}"
-fmt_usd = lambda v: f"${v:,.0f}" if v >= 1000 else f"${v:.2f}" if v >= 1 else f"${v:.4f}"
-fmt_short = lambda v: (f"{v/1e9:.2f}B" if abs(v) >= 1e9 else f"{v/1e6:.2f}M"
-                       if abs(v) >= 1e6 else f"{v/1e3:.1f}K" if abs(v) >= 1e3 else str(v))
+
+
+def fmt_int(v):
+    return f"{v:,}"
+
+
+def fmt_usd(v):
+    return f"${v:,.0f}" if v >= 1000 else f"${v:.2f}" if v >= 1 else f"${v:.4f}"
+
+
+def fmt_short(v):
+    if abs(v) >= 1e9:
+        return f"{v / 1e9:.2f}B"
+    if abs(v) >= 1e6:
+        return f"{v / 1e6:.2f}M"
+    if abs(v) >= 1e3:
+        return f"{v / 1e3:.1f}K"
+    return str(v)

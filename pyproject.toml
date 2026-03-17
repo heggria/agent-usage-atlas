@@ -38,5 +38,38 @@ Issues = "https://github.com/heggria/agent-usage-atlas/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+agent_usage_atlas = ["frontend/**/*"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.9", "mypy>=1.10"]
+
 [project.scripts]
 agent-usage-atlas = "agent_usage_atlas.cli:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "agent_usage_atlas.aggregation._context",
+    "agent_usage_atlas.aggregation.totals",
+    "agent_usage_atlas.aggregation.extended",
+    "agent_usage_atlas.aggregation.projects",
+    "agent_usage_atlas.aggregation.story",
+    "agent_usage_atlas.aggregation.tooling",
+    "agent_usage_atlas.parsers.codex",
+    "agent_usage_atlas.parsers.claude",
+]
+disable_error_code = ["var-annotated", "attr-defined", "index", "operator", "call-overload", "arg-type", "assignment", "return-value"]

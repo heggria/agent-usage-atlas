@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Usage Atlas</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6/css/all.min.css" media="print" onload="this.media='all'">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "preact": "https://esm.sh/preact@10",
+    "preact/hooks": "https://esm.sh/preact@10/hooks",
+    "htm": "https://esm.sh/htm@3"
+  }
+}
+</script>
+<style>
+__CSS__
+</style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+<main class="page">
+  <section class="g g-wide">
+    <article class="p hero-wrap">
+      <div class="eyebrow"><i class="fa-solid fa-chart-line"></i> Agent Usage Atlas<span class="live-badge off" id="live-badge"><span class="dot"></span>Static</span><button class="lang-btn" id="lang-btn" onclick="toggleLang()">&#127760; ZH</button><button class="theme-btn" id="theme-btn" onclick="toggleTheme()"><i class="fa-solid fa-circle-half-stroke"></i></button></div>
+      <div class="range-tabs" id="range-tabs"></div>
+      <h1 id="hero-title"></h1>
+      <p class="hero-copy" id="hero-copy"></p>
+      <div class="chips" id="hero-chips"></div>
+    </article>
+    <aside class="side" id="summary-side"></aside>
+  </section>
+
+  <div class="divider" id="sec-sources"><i class="fa-solid fa-layer-group"></i> <span data-i18n="divSources"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-sources">
+  <section class="g g3" id="source-cards"></section>
+  </div>
+
+  <div class="divider" id="sec-cost"><i class="fa-solid fa-dollar-sign"></i> <span data-i18n="divCost"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-cost">
+  <section class="g g4" id="cost-cards"></section>
+  <section class="g g-wide mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartDailyCost"></h2><span data-i18n="chartDailyCostSub"></span></div><div class="chart tall" id="daily-cost-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartCostBreakdown"></h2><span data-i18n="chartCostBreakdownSub"></span></div><div class="chart tall" id="cost-breakdown-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartModelCost"></h2><span data-i18n="chartModelCostSub"></span></div><div class="chart sm" id="model-cost-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartCostSankey"></h2><span data-i18n="chartCostSankeySub"></span></div><div class="chart sm" id="cost-sankey-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartDailyCostType"></h2><span data-i18n="chartDailyCostTypeSub"></span></div><div class="chart tall" id="daily-cost-type-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartCostCalendar"></h2><span data-i18n="chartCostCalendarSub"></span></div><div class="chart sm" id="cost-calendar-chart"></div></article>
+  </section>
+  </div>
+
+  <div class="divider" id="sec-tokens"><i class="fa-solid fa-chart-bar"></i> <span data-i18n="divTokens"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-tokens">
+  <section class="g g-story">
+    <article class="p"><div class="sh"><h2 data-i18n="chartStory"></h2><span data-i18n="chartStorySub"></span></div><div class="story" id="story-list"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartRose"></h2><span data-i18n="chartRoseSub"></span></div><div class="chart short" id="rose-chart"></div></article>
+  </section>
+  <section class="g g-wide mt">
+    <article class="p">
+      <div class="sh"><h2 data-i18n="chartDailyToken"></h2><span data-i18n="chartDailyTokenSub"></span></div>
+      <div class="chart tall" id="daily-token-chart"></div>
+      <div class="legend" id="token-legend"></div>
+    </article>
+    <article class="p">
+      <div class="sh"><h2 data-i18n="chartTokenSankey"></h2><span data-i18n="chartTokenSankeySub"></span></div>
+      <div class="chart tall" id="token-sankey-chart"></div>
+      <div class="nl" id="source-notes"></div>
+    </article>
+  </section>
+  </div>
+
+  <div class="divider" id="sec-activity"><i class="fa-solid fa-clock"></i> <span data-i18n="divActivity"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-activity">
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2 data-i18n="chartHeatmap"></h2><span data-i18n="chartHeatmapSub"></span></div><div class="chart tall" id="heatmap-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartSourceRadar"></h2><span data-i18n="chartSourceRadarSub"></span></div><div class="chart tall" id="source-radar-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartTokenCalendar"></h2><span data-i18n="chartTokenCalendarSub"></span></div><div class="chart sm" id="token-calendar-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartTimeline"></h2><span data-i18n="chartTimelineSub"></span></div><div class="chart sm" id="timeline-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartBubble"></h2><span data-i18n="chartBubbleSub"></span></div><div class="chart sm" id="bubble-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartTempo"></h2><span data-i18n="chartTempoSub"></span></div><div class="chart sm" id="tempo-chart"></div><div class="nl" id="tempo-notes"></div></article>
+  </section>
+  </div>
+
+  <div class="divider" id="sec-tooling"><i class="fa-solid fa-wrench"></i> <span data-i18n="divTooling"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-tooling">
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2 data-i18n="chartToolRank"></h2><span data-i18n="chartToolRankSub"></span></div><div class="chart sm" id="tool-ranking-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartToolDensity"></h2><span data-i18n="chartToolDensitySub"></span></div><div class="chart sm" id="tool-density-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartToolBigram"></h2><span data-i18n="chartToolBigramSub"></span></div><div class="chart sm" id="tool-bigram-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartTopCmd"></h2><span data-i18n="chartTopCmdSub"></span></div><div class="chart sm" id="top-commands-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartCmdSuccess"></h2><span data-i18n="chartCmdSuccessSub"></span></div><div class="chart sm" id="command-success-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartEfficiency"></h2><span data-i18n="chartEfficiencySub"></span></div><div class="chart sm" id="efficiency-chart"></div></article>
+  </section>
+  </div>
+
+  <div class="divider" id="sec-projects"><i class="fa-solid fa-diagram-project"></i> <span data-i18n="divProjects"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-projects">
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2 data-i18n="chartProjectRank"></h2><span data-i18n="chartProjectRankSub"></span></div><div class="chart sm" id="project-ranking-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartFileTypes"></h2><span data-i18n="chartFileTypesSub"></span></div><div class="chart sm" id="file-types-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartBranch"></h2><span data-i18n="chartBranchSub"></span></div><div class="chart sm" id="branch-activity-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartProductivity"></h2><span data-i18n="chartProductivitySub"></span></div><div class="chart sm" id="productivity-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartBurnRate"></h2><span data-i18n="chartBurnRateSub"></span></div><div class="chart sm" id="burn-rate-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartCostPerTool"></h2><span data-i18n="chartCostPerToolSub"></span></div><div class="chart sm" id="cost-per-tool-chart"></div></article>
+  </section>
+  </div>
+
+  <div class="divider" id="sec-session"><i class="fa-solid fa-magnifying-glass-chart"></i> <span data-i18n="divSession"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-session">
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2 data-i18n="chartSessionDur"></h2><span data-i18n="chartSessionDurSub"></span></div><div class="chart sm" id="session-duration-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartModelRadar"></h2><span data-i18n="chartModelRadarSub"></span></div><div class="chart sm" id="model-radar-chart"></div></article>
+  </section>
+  </div>
+
+  <div class="divider" id="sec-extended"><i class="fa-solid fa-gauge-high"></i> <span data-i18n="divExtended"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-extended">
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2 data-i18n="chartTurnDur"></h2><span data-i18n="chartTurnDurSub"></span></div><div class="chart sm" id="turn-dur-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartDailyTurnDur"></h2><span data-i18n="chartDailyTurnDurSub"></span></div><div class="chart sm" id="daily-turn-dur-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartTaskRate"></h2><span data-i18n="chartTaskRateSub"></span></div><div class="chart sm" id="task-rate-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartCodegenModel"></h2><span data-i18n="chartCodegenModelSub"></span></div><div class="chart sm" id="codegen-model-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2 data-i18n="chartCodegenDaily"></h2><span data-i18n="chartCodegenDailySub"></span></div><div class="chart sm" id="codegen-daily-chart"></div></article>
+    <article class="p"><div class="sh"><h2 data-i18n="chartAiContrib"></h2><span data-i18n="chartAiContribSub"></span></div><div class="chart sm" id="ai-contribution-chart"></div></article>
+  </section>
+  </div>
+
+  <div class="divider" id="sec-leaderboard"><i class="fa-solid fa-list-ol"></i> <span data-i18n="divLeaderboard"></span><i class="fa-solid fa-chevron-down chevron"></i></div>
+  <div class="section-wrap" data-section="sec-leaderboard">
+  <section>
+    <article class="p">
+      <div class="table-wrap"><table id="session-table"></table></div>
+      <div class="footer" id="footer-text"></div>
+    </article>
+  </section>
+  </div>
+
+  <nav class="quick-nav" id="quick-nav">
+    <a href="#sec-sources"><i class="fa-solid fa-layer-group"></i><span>Sources</span></a>
+    <a href="#sec-cost"><i class="fa-solid fa-dollar-sign"></i><span>Cost</span></a>
+    <a href="#sec-tokens"><i class="fa-solid fa-chart-bar"></i><span>Tokens</span></a>
+    <a href="#sec-activity"><i class="fa-solid fa-clock"></i><span>Activity</span></a>
+    <a href="#sec-tooling"><i class="fa-solid fa-wrench"></i><span>Tooling</span></a>
+    <a href="#sec-projects"><i class="fa-solid fa-diagram-project"></i><span>Projects</span></a>
+    <a href="#sec-session"><i class="fa-solid fa-magnifying-glass-chart"></i><span>Session</span></a>
+    <a href="#sec-extended"><i class="fa-solid fa-gauge-high"></i><span>Extended</span></a>
+    <a href="#sec-leaderboard"><i class="fa-solid fa-list-ol"></i><span>Leaderboard</span></a>
+  </nav>
+  <button class="back-top" id="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})"><i class="fa-solid fa-arrow-up"></i></button>
+</main>
+
+<script>
+__JS__
+</script>
+</body>
+</html>
