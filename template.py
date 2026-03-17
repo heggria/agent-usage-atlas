@@ -1,0 +1,1303 @@
+"""HTML template and client-side chart rendering for the dashboard."""
+from __future__ import annotations
+
+import json
+
+
+def build_html(data: dict | None = None, *, poll_interval_ms: int = 0) -> str:
+    payload = "null" if data is None else json.dumps(data, ensure_ascii=False)
+    interval = max(1000, int(poll_interval_ms or 0))
+    return _template().replace("__DATA__", payload).replace("__POLL_MS__", str(interval))
+
+
+def _template() -> str:
+    return """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Usage Atlas</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d1016;
+  --surface:rgba(255,255,255,.04);
+  --surface-strong:rgba(255,255,255,.07);
+  --border:rgba(255,255,255,.08);
+  --text:#ece7df;
+  --text-secondary:rgba(255,255,255,.7);
+  --text-muted:rgba(255,255,255,.42);
+  --accent:#f0b866;
+  --codex:#ff8a50;
+  --claude:#ffd43b;
+  --cursor:#748ffc;
+  --uncached:#f4b183;
+  --cache-read:#51cf66;
+  --cache-write:#b197fc;
+  --output:#74c0fc;
+  --reason:#e599f7;
+  --cost:#ff6b6b;
+  --radius:18px;
+  --radius-sm:12px;
+  --shadow:0 18px 70px rgba(0,0,0,.26);
+}
+body{
+  min-height:100vh;
+  color:var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(255,138,80,.16), transparent 26%),
+    radial-gradient(circle at top right, rgba(116,192,252,.12), transparent 24%),
+    linear-gradient(180deg, #131722 0%, #0d1016 58%, #0b0d12 100%);
+  font:14px/1.6 Inter,-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.page{max-width:1460px;margin:0 auto;padding:24px 12px 64px}
+.g{display:grid;gap:16px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.g-wide{grid-template-columns:2.1fr 1fr}
+.g-story{grid-template-columns:1.15fr .85fr}
+.mt{margin-top:16px}
+.p{
+  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.025));
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:24px;
+  box-shadow:var(--shadow);
+  backdrop-filter:blur(22px);
+}
+.hero-wrap{position:relative;overflow:hidden;padding:40px 36px}
+.hero-wrap::before{
+  content:"";
+  position:absolute;inset:0;
+  background:
+    radial-gradient(circle at 16% 18%, rgba(255,138,80,.18), transparent 18%),
+    radial-gradient(circle at 86% 12%, rgba(240,184,102,.18), transparent 20%),
+    linear-gradient(135deg, rgba(255,255,255,.02), transparent 55%);
+  pointer-events:none;
+}
+.eyebrow{
+  display:flex;align-items:center;gap:8px;
+  color:var(--accent);
+  font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+}
+h1{
+  margin-top:16px;
+  max-width:13ch;
+  font-size:clamp(38px,5vw,66px);
+  line-height:.95;
+  font-weight:900;
+  letter-spacing:-.045em;
+  background:linear-gradient(135deg,var(--text),var(--accent));
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+.hero-copy{margin-top:18px;max-width:62ch;color:var(--text-secondary);font-size:15px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}
+.chip{
+  display:inline-flex;align-items:center;gap:7px;
+  padding:8px 14px;border-radius:999px;
+  background:rgba(255,255,255,.06);
+  border:1px solid var(--border);
+  color:var(--text-secondary);font-size:12px
+}
+.side{display:grid;gap:12px;align-content:start}
+.sc,.cc{
+  background:rgba(255,255,255,.04);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  padding:18px;
+}
+.sc .lbl,.metric-k{
+  color:var(--text-muted);
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+}
+.sc .val,.metric-v{font-size:28px;font-weight:800;letter-spacing:-.03em;margin-top:6px}
+.sc .hint,.tiny{color:var(--text-secondary);font-size:12px;margin-top:8px}
+.divider{
+  display:flex;align-items:center;gap:12px;
+  margin:30px 0 18px;
+  color:var(--text-muted);
+  font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+}
+.divider::after{content:"";flex:1;height:1px;background:var(--border)}
+.sh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px}
+.sh h2{font-size:20px;font-weight:800;letter-spacing:-.02em}
+.sh span{color:var(--text-muted);font-size:12px}
+.src{position:relative;overflow:hidden}
+.src::before,.cc::before{
+  content:"";
+  position:absolute;top:0;left:0;right:0;height:3px;
+}
+.src.codex::before{background:linear-gradient(90deg,var(--codex),transparent)}
+.src.claude::before{background:linear-gradient(90deg,var(--claude),transparent)}
+.src.cursor::before{background:linear-gradient(90deg,var(--cursor),transparent)}
+.cc.cost::before{background:linear-gradient(90deg,var(--cost),transparent)}
+.cc.save::before{background:linear-gradient(90deg,var(--cache-read),transparent)}
+.src .title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-weight:700;font-size:14px}
+.pill{
+  padding:4px 10px;border-radius:999px;border:1px solid var(--border);
+  color:var(--text-muted);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+}
+.src .big{font-size:32px;font-weight:900;letter-spacing:-.03em}
+.src .sub{font-size:11px;color:var(--text-muted);margin-top:2px}
+.mg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.mi{
+  padding:10px 12px;border-radius:10px;
+  background:rgba(255,255,255,.035);
+  border:1px solid rgba(255,255,255,.05);
+}
+.mi .k{color:var(--text-muted);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.mi .v{margin-top:4px;font-size:14px;font-weight:700}
+.cc .big{font-size:30px;font-weight:900;letter-spacing:-.03em;margin-top:8px}
+.chart{width:100%;height:380px}
+.chart.tall{height:430px}
+.chart.sm{height:340px}
+.chart.short{height:300px}
+.story{display:grid;gap:10px}
+.si,.note{
+  display:flex;gap:12px;align-items:flex-start;
+  padding:12px 14px;border-radius:12px;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.06);
+}
+.si i,.note i{margin-top:3px;color:var(--accent)}
+.nl{display:grid;gap:10px;margin-top:14px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px;color:var(--text-secondary);font-size:12px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--border)}
+th{color:var(--text-muted);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+td{color:var(--text-secondary)}
+tr:hover td{background:rgba(255,255,255,.02)}
+.footer{margin-top:16px;color:var(--text-muted);font-size:11px;line-height:1.65}
+.footer code{
+  padding:2px 6px;border-radius:6px;
+  background:rgba(255,255,255,.06);
+  color:var(--text-secondary);
+}
+@media (max-width:1180px){
+  .g2,.g3,.g4,.g-wide,.g-story{grid-template-columns:1fr}
+  .page{padding:16px 0 48px;width:calc(100vw - 24px)}
+  .p{padding:18px}
+  .hero-wrap{padding:28px 24px}
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="g g-wide">
+    <article class="p hero-wrap">
+      <div class="eyebrow"><i class="fa-solid fa-chart-line"></i> Agent Usage Atlas</div>
+      <h1>三个 Agent 栈的联赛积分榜</h1>
+      <p class="hero-copy" id="hero-copy"></p>
+      <div class="chips" id="hero-chips"></div>
+    </article>
+    <aside class="side" id="summary-side"></aside>
+  </section>
+
+  <div class="divider"><i class="fa-solid fa-layer-group"></i> Sources</div>
+  <section class="g g3" id="source-cards"></section>
+
+  <div class="divider"><i class="fa-solid fa-dollar-sign"></i> Cost Analysis</div>
+  <section class="g g4" id="cost-cards"></section>
+  <section class="g g-wide mt">
+    <article class="p"><div class="sh"><h2>每日花费趋势</h2><span>按来源堆叠 + 累计花费线</span></div><div class="chart tall" id="daily-cost-chart"></div></article>
+    <article class="p"><div class="sh"><h2>花费结构拆解</h2><span>钱花在哪种 Token 上</span></div><div class="chart tall" id="cost-breakdown-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>模型花费排行</h2><span>哪些模型最烧钱</span></div><div class="chart sm" id="model-cost-chart"></div></article>
+    <article class="p"><div class="sh"><h2>来源花费桑基图</h2><span>从来源流到各类花费</span></div><div class="chart sm" id="cost-sankey-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>每日花费结构</h2><span>哪种 Token 最烧钱</span></div><div class="chart tall" id="daily-cost-type-chart"></div></article>
+    <article class="p"><div class="sh"><h2>花费日历</h2><span>每天花了多少钱</span></div><div class="chart sm" id="cost-calendar-chart"></div></article>
+  </section>
+
+  <div class="divider"><i class="fa-solid fa-chart-bar"></i> Token Analytics</div>
+  <section class="g g-story">
+    <article class="p"><div class="sh"><h2>剧情梗概</h2><span>把数字翻译成人话</span></div><div class="story" id="story-list"></div></article>
+    <article class="p"><div class="sh"><h2>来源玫瑰图</h2><span>体量 + 气质一起看</span></div><div class="chart short" id="rose-chart"></div></article>
+  </section>
+  <section class="g g-wide mt">
+    <article class="p">
+      <div class="sh"><h2>每日 Token 结构</h2><span>堆叠柱 + 累计线</span></div>
+      <div class="chart tall" id="daily-token-chart"></div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--uncached)"></i>Uncached Input</span>
+        <span><i class="dot" style="background:var(--cache-read)"></i>Cache Read</span>
+        <span><i class="dot" style="background:var(--cache-write)"></i>Cache Write</span>
+        <span><i class="dot" style="background:var(--output)"></i>Output + Reason</span>
+      </div>
+    </article>
+    <article class="p">
+      <div class="sh"><h2>Token 流向桑基图</h2><span>从来源流到各类 token 桶</span></div>
+      <div class="chart tall" id="token-sankey-chart"></div>
+      <div class="nl" id="source-notes"></div>
+    </article>
+  </section>
+
+  <div class="divider"><i class="fa-solid fa-clock"></i> Activity Patterns</div>
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2>活跃热区</h2><span>星期 × 小时，越深越忙</span></div><div class="chart tall" id="heatmap-chart"></div></article>
+    <article class="p"><div class="sh"><h2>来源能力雷达</h2><span>体量、缓存、输出、活跃度四维比较</span></div><div class="chart tall" id="source-radar-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>Token 日历</h2><span>把高峰日钉在日历上</span></div><div class="chart sm" id="token-calendar-chart"></div></article>
+    <article class="p"><div class="sh"><h2>Timeline</h2><span>峰值、拐点与累计爬坡</span></div><div class="chart sm" id="timeline-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>Session 气泡图</h2><span>x=时长, y=token, 气泡=缓存</span></div><div class="chart sm" id="bubble-chart"></div></article>
+    <article class="p"><div class="sh"><h2>小时节奏图</h2><span>24 小时内谁最爱开工</span></div><div class="chart sm" id="tempo-chart"></div><div class="nl" id="tempo-notes"></div></article>
+  </section>
+
+  <div class="divider"><i class="fa-solid fa-wrench"></i> Tooling & Commands</div>
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2>工具排行</h2><span>按调用次数</span></div><div class="chart sm" id="tool-ranking-chart"></div></article>
+    <article class="p"><div class="sh"><h2>工具时段密度</h2><span>24h 分布</span></div><div class="chart sm" id="tool-density-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>Tool Bigram Chord</h2><span>工具跳转关系图</span></div><div class="chart sm" id="tool-bigram-chart"></div></article>
+    <article class="p"><div class="sh"><h2>Top Commands</h2><span>最常用命令</span></div><div class="chart sm" id="top-commands-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>命令成功率</h2><span>按天看 success vs fail</span></div><div class="chart sm" id="command-success-chart"></div></article>
+    <article class="p"><div class="sh"><h2>效率指标</h2><span>推理比、缓存命中、tokens/message</span></div><div class="chart sm" id="efficiency-chart"></div></article>
+  </section>
+
+  <div class="divider"><i class="fa-solid fa-diagram-project"></i> Projects & Productivity</div>
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2>项目排行</h2><span>按 Token 量</span></div><div class="chart sm" id="project-ranking-chart"></div></article>
+    <article class="p"><div class="sh"><h2>文件类型分布</h2><span>最常碰哪些扩展名</span></div><div class="chart sm" id="file-types-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>分支活跃度</h2><span>top branches by session count</span></div><div class="chart sm" id="branch-activity-chart"></div></article>
+    <article class="p"><div class="sh"><h2>Productivity Score</h2><span>0.3/0.2/0.3/0.2 复合分</span></div><div class="chart sm" id="productivity-chart"></div></article>
+  </section>
+  <section class="g g2 mt">
+    <article class="p"><div class="sh"><h2>Burn Rate Projection</h2><span>按近 7 天均值投影 30 天</span></div><div class="chart sm" id="burn-rate-chart"></div></article>
+    <article class="p"><div class="sh"><h2>Cost / Tool Call</h2><span>每天每次调用花多少钱</span></div><div class="chart sm" id="cost-per-tool-chart"></div></article>
+  </section>
+
+  <div class="divider"><i class="fa-solid fa-magnifying-glass-chart"></i> Session Deep Dive</div>
+  <section class="g g2">
+    <article class="p"><div class="sh"><h2>Session Duration Histogram</h2><span>会话时长分布</span></div><div class="chart sm" id="session-duration-chart"></div></article>
+    <article class="p"><div class="sh"><h2>Model Radar Comparison</h2><span>top 5 models on 5 axes</span></div><div class="chart sm" id="model-radar-chart"></div></article>
+  </section>
+
+  <div class="divider"><i class="fa-solid fa-list-ol"></i> Session Leaderboard</div>
+  <section>
+    <article class="p">
+      <table id="session-table"></table>
+      <div class="footer">
+        数据源：Codex <code>~/.codex</code> · Claude <code>~/.claude/projects</code> · Cursor transcript 仅统计活动消息<br>
+        花费为基于公开 API 定价的估算值 · 图表渲染使用 <code>Apache ECharts</code>
+      </div>
+    </article>
+  </section>
+</main>
+
+<script>
+let data = __DATA__;
+const pageParams = new URLSearchParams(window.location.search);
+const dashboardRangeParams = new URLSearchParams();
+if (pageParams.get('days')) dashboardRangeParams.set('days', pageParams.get('days'));
+if (pageParams.get('since')) dashboardRangeParams.set('since', pageParams.get('since'));
+const dashboardApiUrl = '/api/dashboard' + (dashboardRangeParams.toString() ? `?${dashboardRangeParams.toString()}` : '');
+if (pageParams.get('interval')) {
+  dashboardRangeParams.set('interval', pageParams.get('interval'));
+}
+const dashboardStreamUrl = '/api/dashboard/stream' + (dashboardRangeParams.toString() ? `?${dashboardRangeParams.toString()}` : '');
+const isLiveMode = data === null;
+let lastDashboardHash = '';
+let refreshTimer = null;
+let streamSource = null;
+let isStreamConnected = false;
+const charts = [];
+const chartCache = {};
+const fmtInt = n => Number(n || 0).toLocaleString('en-US');
+const fmtShort = n => {
+  const v = Number(n || 0);
+  const a = Math.abs(v);
+  if (a >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+  if (a >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (a >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return String(Math.round(v));
+};
+const fmtPct = v => ((Number(v || 0) * 100).toFixed(1)) + '%';
+const fmtUSD = v => {
+  const value = Number(v || 0);
+  if (value >= 1000) return '$' + value.toLocaleString('en-US', {maximumFractionDigits: 0});
+  if (value >= 100) return '$' + value.toFixed(1);
+  if (value >= 1) return '$' + value.toFixed(2);
+  if (value >= 0.01) return '$' + value.toFixed(3);
+  return '$' + value.toFixed(4);
+};
+const C = {
+  Codex: '#ff8a50',
+  Claude: '#ffd43b',
+  Cursor: '#748ffc',
+  uncached: '#f4b183',
+  cacheRead: '#51cf66',
+  cacheWrite: '#b197fc',
+  output: '#74c0fc',
+  reason: '#e599f7',
+  cost: '#ff6b6b'
+};
+const TX = 'rgba(255,255,255,.68)';
+const AX = 'rgba(255,255,255,.06)';
+const BG = 'rgba(255,255,255,.03)';
+const getTokenSources = () => (data && data.source_cards ? data.source_cards.filter(card => card.token_capable) : []);
+const chartTheme = () => ({
+  textStyle: {color: TX, fontFamily: 'Inter,-apple-system,PingFang SC,sans-serif'},
+  animationDuration: 700,
+  tooltip: {
+    backgroundColor: 'rgba(15,18,28,.92)',
+    borderColor: 'rgba(255,255,255,.08)',
+    borderWidth: 1,
+    textStyle: {color: '#ece7df', fontSize: 12}
+  }
+});
+const initChart = id => {
+  if (chartCache[id]) {
+    return chartCache[id];
+  }
+  const chart = echarts.init(document.getElementById(id), null, {renderer: 'canvas'});
+  chartCache[id] = chart;
+  charts.push(chart);
+  return chart;
+};
+
+function clearCharts(){
+  charts.forEach(chart => chart.dispose());
+  charts.length = 0;
+  Object.keys(chartCache).forEach(key => delete chartCache[key]);
+}
+
+function setDashboard(nextData){
+  if (!nextData || typeof nextData !== 'object') {
+    return false;
+  }
+  const hash = JSON.stringify(nextData);
+  if (!data) {
+    data = nextData;
+    lastDashboardHash = hash;
+    return true;
+  }
+  if (hash === lastDashboardHash) {
+    return false;
+  }
+  data = nextData;
+  lastDashboardHash = hash;
+  return true;
+}
+
+function setStatus(message, isError = false){
+  if (!message) return;
+  if (data === null || isError) {
+    const copy = document.getElementById('hero-copy');
+    if (copy) {
+      copy.textContent = message;
+    }
+  }
+  if (!isError) {
+    console.debug(`[dashboard] ${message}`);
+    return;
+  }
+  console.error(`[dashboard] ${message}`);
+}
+
+function buildDashboardUrl(){
+  return dashboardApiUrl;
+}
+
+function setStreamStatus(message, isError = false){
+  if (isError) {
+    isStreamConnected = false;
+  } else {
+    isStreamConnected = true;
+  }
+  setStatus(message, isError);
+}
+
+async function fetchDashboardOnce(){
+  if (!isLiveMode) return;
+  const url = buildDashboardUrl();
+  try {
+    const res = await fetch(url, {cache: 'no-store'});
+    if (!res.ok) {
+      setStreamStatus(`刷新失败：${res.status} ${res.statusText}`, true);
+      return;
+    }
+    const nextData = await res.json();
+    if (!nextData || typeof nextData !== 'object') {
+      setStreamStatus('刷新返回数据为空或格式异常', true);
+      return;
+    }
+    if (setDashboard(nextData)) {
+      renderDashboard();
+    }
+    setStreamStatus('回退轮询更新成功');
+  } catch (err) {
+    setStreamStatus(`刷新失败：${String(err && err.message ? err.message : err)}`, true);
+    return;
+  }
+}
+
+function stopStream(){
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+  if (streamSource && streamSource.readyState !== EventSource.CLOSED) {
+    streamSource.close();
+  }
+  streamSource = null;
+}
+
+function startPollingFallback(){
+  if (!isLiveMode || refreshTimer !== null) return;
+  setStreamStatus('当前环境不支持 EventSource，回退轮询更新。');
+  fetchDashboardOnce();
+  const intervalMs = Math.max(1000, Number(__POLL_MS__) || 5000);
+  refreshTimer = setInterval(() => {
+    void fetchDashboardOnce();
+  }, intervalMs);
+}
+
+function startSseDashboard(){
+  if (!isLiveMode || streamSource) return;
+  if (typeof EventSource === 'undefined') {
+    startPollingFallback();
+    return;
+  }
+
+  try {
+    streamSource = new EventSource(dashboardStreamUrl);
+  } catch (err) {
+    setStreamStatus(`SSE 初始化失败：${String(err && err.message ? err.message : err)}，回退轮询更新。`, true);
+    startPollingFallback();
+    return;
+  }
+
+  streamSource.onopen = () => {
+    setStreamStatus('SSE 已连接，等待实时更新。');
+  };
+
+  streamSource.onerror = () => {
+    setStreamStatus('实时连接中断，正在自动重连…', true);
+  };
+
+  streamSource.onmessage = event => {
+    try {
+      const nextData = JSON.parse(event.data);
+      if (setDashboard(nextData)) {
+        renderDashboard();
+      }
+      setStreamStatus('SSE 已连接，数据已更新。');
+    } catch (err) {
+      setStreamStatus(`SSE 数据解析失败：${String(err && err.message ? err.message : err)}`, true);
+    }
+  };
+}
+
+function renderHero(){
+  if (!data || !data.totals) {
+    document.getElementById('hero-copy').textContent = '等待 API 返回数据... 如果服务未启动，请先运行 --serve。';
+    return;
+  }
+  const t = data.totals;
+  document.getElementById('hero-copy').textContent =
+    `统计窗口 ${data.range.start_local} → ${data.range.end_local}。累计处理 ${fmtShort(t.grand_total)} tokens，估算花费 ${fmtUSD(t.grand_cost)}，缓存命中占 ${fmtPct(t.cache_ratio)}。这不是 usage report，是 Agent 生产力的赛后复盘。`;
+  document.getElementById('hero-chips').innerHTML = [
+    `<span class="chip"><i class="fa-solid fa-fire" style="color:var(--codex)"></i>${fmtShort(t.grand_total)} tokens</span>`,
+    `<span class="chip"><i class="fa-solid fa-dollar-sign" style="color:var(--cost)"></i>${fmtUSD(t.grand_cost)} cost</span>`,
+    `<span class="chip"><i class="fa-solid fa-database" style="color:var(--cache-read)"></i>${fmtPct(t.cache_ratio)} cached</span>`,
+    `<span class="chip"><i class="fa-solid fa-wrench" style="color:var(--accent)"></i>${fmtInt(t.tool_call_total)} tool calls</span>`
+  ].join('');
+  const cards = [
+    {label: 'Total Tokens', value: fmtShort(t.grand_total), hint: `日均 ${fmtShort(t.average_per_day)}，峰值 ${t.peak_day_label}`},
+    {label: 'Estimated Cost', value: fmtUSD(t.grand_cost), hint: `日均 ${fmtUSD(t.average_cost_per_day)}，30 天投影 ${fmtUSD(t.burn_rate_projection_30d)}`},
+    {label: 'Cache Stack', value: fmtShort(t.cache_read + t.cache_write), hint: `省下 ${fmtUSD(t.cache_savings_usd)}，命中率 ${fmtPct(t.cache_ratio)}`},
+    {label: 'Median Session', value: fmtShort(t.median_session_tokens), hint: `${t.median_session_minutes} 分钟 / ${fmtUSD(t.median_session_cost)}`}
+  ];
+  document.getElementById('summary-side').innerHTML = cards.map(card => `
+    <div class="sc">
+      <div class="lbl">${card.label}</div>
+      <div class="val">${card.value}</div>
+      <div class="hint">${card.hint}</div>
+    </div>`).join('');
+}
+
+function renderSourceCards(){
+  document.getElementById('source-cards').innerHTML = data.source_cards.map(card => {
+    const cls = card.source.toLowerCase();
+    const icon = card.source === 'Codex' ? 'fa-terminal' : card.source === 'Claude' ? 'fa-feather-pointed' : 'fa-arrow-pointer';
+    return `<article class="p src ${cls}">
+      <div class="title"><span><i class="fa-solid ${icon}"></i> ${card.source}</span><span class="pill">${card.token_capable ? 'token-tracked' : 'activity-only'}</span></div>
+      <div class="big">${card.token_capable ? fmtShort(card.total) : fmtInt(card.messages)}</div>
+      <div class="sub">${card.token_capable ? 'tracked tokens' : 'messages only'}</div>
+      <div class="mg">
+        <div class="mi"><div class="k">Sessions</div><div class="v">${fmtInt(card.sessions)}</div></div>
+        <div class="mi"><div class="k">Cost</div><div class="v" style="color:var(--cost)">${card.token_capable ? fmtUSD(card.cost) : '-'}</div></div>
+        <div class="mi"><div class="k">Top Model</div><div class="v" style="font-size:12px">${card.top_model}</div></div>
+        <div class="mi"><div class="k">Cache</div><div class="v">${card.token_capable ? fmtShort(card.cache_read + card.cache_write) : '-'}</div></div>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function renderCostCards(){
+  const t = data.totals;
+  const cards = [
+    {label: 'Total Cost', value: fmtUSD(t.grand_cost), hint: `${data.range.day_count} 天累计`, cls: 'cost'},
+    {label: 'Daily Average', value: fmtUSD(t.average_cost_per_day), hint: `峰值 ${t.cost_peak_day_label}: ${fmtUSD(t.cost_peak_day_total)}`, cls: 'cost'},
+    {label: 'Cost / Message', value: fmtUSD(t.cost_per_message), hint: `中位 session ${fmtUSD(t.median_session_cost)}`, cls: 'cost'},
+    {label: 'Cache Savings', value: fmtUSD(t.cache_savings_usd), hint: `节省 ${fmtPct(t.cache_savings_ratio)}`, cls: 'save'}
+  ];
+  document.getElementById('cost-cards').innerHTML = cards.map(card => `
+    <article class="p cc ${card.cls}">
+      <div class="metric-k">${card.label}</div>
+      <div class="big">${card.value}</div>
+      <div class="tiny">${card.hint}</div>
+    </article>`).join('');
+}
+
+function renderStory(){
+  const blocks = [
+    ...data.story.narrative,
+    ...data.story.jokes.map(text => ({icon: 'fa-comment-dots', text}))
+  ];
+  document.getElementById('story-list').innerHTML = blocks.map(block => `
+    <div class="si"><i class="fa-solid ${block.icon}"></i><div>${block.text}</div></div>
+  `).join('');
+}
+
+function renderDailyCostChart(){
+  const chart = initChart('daily-cost-chart');
+  const sources = getTokenSources().map(card => card.source);
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 6, textStyle: {color: TX}},
+    grid: {top: 58, left: 68, right: 68, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis', axisPointer: {type: 'shadow'}, valueFormatter: value => fmtUSD(value)},
+    xAxis: {type: 'category', data: data.days.map(day => day.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: [
+      {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtUSD(value)}},
+      {type: 'value', splitLine: {show: false}, axisLabel: {color: TX, formatter: value => fmtUSD(value)}}
+    ],
+    series: [
+      ...sources.map(source => ({
+        name: source,
+        type: 'bar',
+        stack: 'cost',
+        itemStyle: {color: C[source] || '#999', borderRadius: [6, 6, 0, 0]},
+        data: data.days.map(day => +(day.cost_sources[source] || 0).toFixed(4))
+      })),
+      {
+        name: 'Cumulative',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        symbolSize: 6,
+        lineStyle: {width: 3, color: 'rgba(255,255,255,.75)'},
+        itemStyle: {color: '#fff'},
+        areaStyle: {color: 'rgba(255,255,255,.06)'},
+        data: data.days.map(day => day.cost_cumulative)
+      }
+    ]
+  });
+}
+
+function renderCostBreakdownChart(){
+  const t = data.totals;
+  const items = [
+    {name: 'Uncached Input', value: t.cost_input, color: C.uncached},
+    {name: 'Cache Read', value: t.cost_cache_read, color: C.cacheRead},
+    {name: 'Cache Write', value: t.cost_cache_write, color: C.cacheWrite},
+    {name: 'Output', value: t.cost_output, color: C.output},
+    {name: 'Reasoning', value: t.cost_reasoning, color: C.reason}
+  ].filter(item => item.value > 0);
+  const chart = initChart('cost-breakdown-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {bottom: 0, textStyle: {color: TX}},
+    tooltip: {...chartTheme().tooltip, formatter: params => `${params.name}<br>${fmtUSD(params.value)} (${params.percent}%)`},
+    series: [{
+      type: 'pie',
+      radius: ['40%', '74%'],
+      center: ['50%', '45%'],
+      itemStyle: {borderRadius: 10, borderColor: 'rgba(13,16,22,.95)', borderWidth: 3},
+      label: {color: TX, formatter: params => `${params.name}\n${params.percent}%`},
+      data: items.map(item => ({name: item.name, value: +item.value.toFixed(4), itemStyle: {color: item.color}}))
+    }]
+  });
+}
+
+function renderModelCostChart(){
+  const rows = data.trend_analysis.model_costs.slice(0, 10);
+  const chart = initChart('model-cost-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 170, right: 60, bottom: 24},
+    tooltip: {...chartTheme().tooltip, valueFormatter: value => fmtUSD(value)},
+    xAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtUSD(value)}},
+    yAxis: {type: 'category', data: rows.map(row => row.model).reverse(), axisLabel: {color: TX, width: 150, overflow: 'truncate', fontSize: 11}},
+    series: [{
+      type: 'bar',
+      barMaxWidth: 22,
+      data: rows.map((row, index) => ({value: row.cost, itemStyle: {color: ['#ff6b6b','#ff8a50','#ffa94d','#ffd43b','#a9e34b','#51cf66','#74c0fc','#748ffc','#b197fc','#e599f7'][index % 10], borderRadius: [0, 6, 6, 0]}})).reverse(),
+      label: {show: true, position: 'right', color: TX, formatter: params => fmtUSD(params.value), fontSize: 11}
+    }]
+  });
+}
+
+function renderCostSankey(){
+  const chart = initChart('cost-sankey-chart');
+  chart.setOption({
+    ...chartTheme(),
+    tooltip: {...chartTheme().tooltip, valueFormatter: value => fmtUSD(value)},
+    series: [{
+      type: 'sankey',
+      left: 8,
+      right: 8,
+      top: 24,
+      bottom: 12,
+      nodeWidth: 18,
+      nodeGap: 14,
+      lineStyle: {color: 'gradient', curveness: .45, opacity: .3},
+      label: {color: '#fff', fontSize: 11},
+      data: data.trend_analysis.cost_sankey.nodes.map(node => ({
+        name: node.name,
+        itemStyle: {color: C[node.name] || ['Input Cost','Cache Read','Cache Write','Output','Reasoning'].includes(node.name)
+          ? { 'Input Cost': C.uncached, 'Cache Read': C.cacheRead, 'Cache Write': C.cacheWrite, 'Output': C.output, 'Reasoning': C.reason }[node.name]
+          : '#888'}
+      })),
+      links: data.trend_analysis.cost_sankey.links
+    }]
+  });
+}
+
+function renderDailyCostTypeChart(){
+  const chart = initChart('daily-cost-type-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 6, textStyle: {color: TX}},
+    grid: {top: 58, left: 68, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis', axisPointer: {type: 'shadow'}, valueFormatter: value => fmtUSD(value)},
+    xAxis: {type: 'category', data: data.days.map(day => day.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtUSD(value)}},
+    series: [
+      {name: 'Input', type: 'bar', stack: 'cost-type', itemStyle: {color: C.uncached}, data: data.days.map(day => day.cost_input)},
+      {name: 'Cache Read', type: 'bar', stack: 'cost-type', itemStyle: {color: C.cacheRead}, data: data.days.map(day => day.cost_cache_read)},
+      {name: 'Cache Write', type: 'bar', stack: 'cost-type', itemStyle: {color: C.cacheWrite}, data: data.days.map(day => day.cost_cache_write)},
+      {name: 'Output', type: 'bar', stack: 'cost-type', itemStyle: {color: C.output}, data: data.days.map(day => day.cost_output)},
+      {name: 'Reasoning', type: 'bar', stack: 'cost-type', itemStyle: {color: C.reason, borderRadius: [6, 6, 0, 0]}, data: data.days.map(day => day.cost_reasoning)}
+    ]
+  });
+}
+
+function renderCostCalendar(){
+  const chart = initChart('cost-calendar-chart');
+  const cells = data.days.map(day => [day.date, +day.cost.toFixed(2)]);
+  chart.setOption({
+    ...chartTheme(),
+    tooltip: {...chartTheme().tooltip, formatter: params => `${params.value[0]}<br>${fmtUSD(params.value[1])}`},
+    visualMap: {min: 0, max: Math.max(...data.days.map(day => day.cost), 1), orient: 'horizontal', left: 'center', bottom: 8, textStyle: {color: TX}, inRange: {color: ['rgba(255,255,255,.04)','#5c3a1e','#c0392b','#ff6b6b']}},
+    calendar: {top: 28, left: 24, right: 24, cellSize: ['auto', 22], range: [data.range.start_local.slice(0, 10), data.range.end_local.slice(0, 10)], yearLabel: {show: false}, monthLabel: {color: TX, margin: 14}, dayLabel: {color: TX, firstDay: 1}, splitLine: {lineStyle: {color: AX}}, itemStyle: {borderWidth: 3, borderColor: '#0d1016', color: BG}},
+    series: [{type: 'heatmap', coordinateSystem: 'calendar', data: cells}]
+  });
+}
+
+function renderRoseChart(){
+  const chart = initChart('rose-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {bottom: 0, textStyle: {color: TX}},
+    series: [{
+      type: 'pie',
+      radius: ['24%', '74%'],
+      center: ['50%', '46%'],
+      roseType: 'radius',
+      itemStyle: {borderRadius: 10, borderColor: '#0d1016', borderWidth: 3},
+      label: {color: TX, formatter: params => `${params.name}\n${params.percent}%`},
+      data: data.source_cards.map(card => ({
+        name: card.source,
+        value: card.token_capable ? card.total : Math.max(card.messages, 1),
+        itemStyle: {color: C[card.source] || '#888'}
+      }))
+    }]
+  });
+}
+
+function renderDailyTokenChart(){
+  const chart = initChart('daily-token-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 6, textStyle: {color: TX}},
+    grid: {top: 58, left: 60, right: 60, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis', axisPointer: {type: 'shadow'}},
+    xAxis: {type: 'category', data: data.days.map(day => day.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: [
+      {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
+      {type: 'value', splitLine: {show: false}, axisLabel: {color: TX, formatter: value => fmtShort(value)}}
+    ],
+    series: [
+      {name: 'Uncached Input', type: 'bar', stack: 'tokens', itemStyle: {color: C.uncached}, data: data.days.map(day => day.uncached_input)},
+      {name: 'Cache Read', type: 'bar', stack: 'tokens', itemStyle: {color: C.cacheRead}, data: data.days.map(day => day.cache_read)},
+      {name: 'Cache Write', type: 'bar', stack: 'tokens', itemStyle: {color: C.cacheWrite}, data: data.days.map(day => day.cache_write)},
+      {name: 'Output + Reason', type: 'bar', stack: 'tokens', itemStyle: {color: C.output, borderRadius: [6, 6, 0, 0]}, data: data.days.map(day => day.output + day.reasoning)},
+      {name: 'Cumulative', type: 'line', yAxisIndex: 1, smooth: true, symbolSize: 6, lineStyle: {width: 3, color: 'rgba(255,255,255,.76)'}, itemStyle: {color: '#fff'}, areaStyle: {color: 'rgba(255,255,255,.05)'}, data: data.days.map(day => day.cumulative_tokens)}
+    ]
+  });
+}
+
+function renderTokenSankey(){
+  const chart = initChart('token-sankey-chart');
+  chart.setOption({
+    ...chartTheme(),
+    series: [{
+      type: 'sankey',
+      left: 8,
+      right: 8,
+      top: 24,
+      bottom: 12,
+      nodeWidth: 18,
+      nodeGap: 14,
+      lineStyle: {color: 'gradient', curveness: .45, opacity: .28},
+      label: {color: '#fff', fontSize: 11},
+      data: data.trend_analysis.token_sankey.nodes.map(node => ({
+        name: node.name,
+        itemStyle: {color: C[node.name] || {'Uncached Input': C.uncached, 'Cache Read': C.cacheRead, 'Cache Write': C.cacheWrite, 'Output': C.output, 'Reasoning': C.reason}[node.name] || '#888'}
+      })),
+      links: data.trend_analysis.token_sankey.links
+    }]
+  });
+  document.getElementById('source-notes').innerHTML = [
+    ...data.story.source_notes.map(text => `<div class="note"><i class="fa-solid fa-circle-info"></i><div>${text}</div></div>`),
+    ...data.story.jokes.map(text => `<div class="note"><i class="fa-solid fa-face-smile"></i><div>${text}</div></div>`)
+  ].join('');
+}
+
+function renderHeatmap(){
+  const chart = initChart('heatmap-chart');
+  const points = [];
+  data.working_patterns.heatmap.forEach((row, y) => row.values.forEach((value, x) => points.push([x, y, value])));
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 44, left: 70, right: 24, bottom: 34},
+    xAxis: {type: 'category', data: Array.from({length: 24}, (_, i) => `${i}`), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}},
+    yAxis: {type: 'category', data: data.working_patterns.heatmap.map(row => row.weekday), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}},
+    visualMap: {min: 0, max: Math.max(...points.map(point => point[2]), 1), orient: 'horizontal', left: 'center', bottom: 0, textStyle: {color: TX}, inRange: {color: ['rgba(255,255,255,.03)','#5c3a1e','#ff8a50','#ffd43b']}},
+    series: [{type: 'heatmap', data: points, itemStyle: {borderRadius: 6, borderColor: '#0d1016', borderWidth: 3}}]
+  });
+}
+
+function renderSourceRadar(){
+  const rows = data.working_patterns.source_radar;
+  const chart = initChart('source-radar-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {bottom: 0, textStyle: {color: TX}},
+    radar: {
+      radius: '62%',
+      center: ['50%', '46%'],
+      splitNumber: 5,
+      axisName: {color: TX, fontSize: 11},
+      splitLine: {lineStyle: {color: AX}},
+      splitArea: {areaStyle: {color: ['rgba(255,255,255,.02)','rgba(255,255,255,.01)']}},
+      indicator: [
+        {name: 'Total', max: Math.max(...rows.map(row => row.total_tokens), 1)},
+        {name: 'Cache', max: Math.max(...rows.map(row => row.cache_total), 1)},
+        {name: 'Output', max: Math.max(...rows.map(row => row.output_total), 1)},
+        {name: 'Sessions', max: Math.max(...rows.map(row => row.sessions), 1)}
+      ]
+    },
+    series: [{
+      type: 'radar',
+      symbol: 'circle',
+      symbolSize: 6,
+      areaStyle: {opacity: .08},
+      lineStyle: {width: 2},
+      data: rows.map(row => ({
+        name: row.name,
+        value: [row.total_tokens, row.cache_total, row.output_total, row.sessions],
+        lineStyle: {color: C[row.name] || '#888'},
+        itemStyle: {color: C[row.name] || '#888'},
+        areaStyle: {color: C[row.name] || '#888', opacity: .08}
+      }))
+    }]
+  });
+}
+
+function renderTokenCalendar(){
+  const chart = initChart('token-calendar-chart');
+  const cells = data.days.map(day => [day.date, day.total_tokens]);
+  chart.setOption({
+    ...chartTheme(),
+    tooltip: {...chartTheme().tooltip, formatter: params => `${params.value[0]}<br>${fmtInt(params.value[1])} tokens`},
+    visualMap: {min: 0, max: Math.max(...data.days.map(day => day.total_tokens), 1), orient: 'horizontal', left: 'center', bottom: 8, textStyle: {color: TX}, inRange: {color: ['rgba(255,255,255,.03)','#3a4a2e','#51cf66','#a9e34b']}},
+    calendar: {top: 28, left: 24, right: 24, cellSize: ['auto', 22], range: [data.range.start_local.slice(0, 10), data.range.end_local.slice(0, 10)], yearLabel: {show: false}, monthLabel: {color: TX, margin: 14}, dayLabel: {color: TX, firstDay: 1}, splitLine: {lineStyle: {color: AX}}, itemStyle: {borderWidth: 3, borderColor: '#0d1016', color: BG}},
+    series: [{type: 'heatmap', coordinateSystem: 'calendar', data: cells}]
+  });
+}
+
+function renderTimeline(){
+  const timeline = data.working_patterns.timeline;
+  const chart = initChart('timeline-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 4, textStyle: {color: TX}},
+    grid: {top: 54, left: 56, right: 24, bottom: 46},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis'},
+    xAxis: {type: 'category', data: timeline.days.map(day => day.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: [
+      {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
+      {type: 'value', splitLine: {show: false}, axisLabel: {color: TX, formatter: value => fmtShort(value)}}
+    ],
+    series: [
+      {name: 'Daily Total', type: 'bar', barMaxWidth: 24, itemStyle: {color: 'rgba(255,138,80,.32)', borderRadius: [6, 6, 0, 0]}, data: timeline.days.map(day => day.total_tokens)},
+      {
+        name: 'Cumulative',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        symbolSize: 6,
+        lineStyle: {width: 3, color: 'rgba(255,255,255,.76)'},
+        itemStyle: {color: '#fff'},
+        data: timeline.days.map(day => day.cumulative_tokens),
+        markPoint: {
+          symbol: 'pin',
+          symbolSize: 38,
+          label: {color: '#fff', fontSize: 10, formatter: params => fmtShort(params.value)},
+          itemStyle: {color: C.Codex},
+          data: timeline.peak_markers.map(marker => ({name: marker.label, coord: [marker.label, marker.cumulative_tokens], value: marker.total_tokens}))
+        }
+      }
+    ]
+  });
+}
+
+function renderBubble(){
+  const rows = data.session_deep_dive.complexity_scatter.slice(0, 50);
+  const chart = initChart('bubble-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 30, left: 62, right: 24, bottom: 54},
+    tooltip: {
+      ...chartTheme().tooltip,
+      formatter: params => `${params.seriesName}<br>${params.data.session}<br>${fmtShort(params.data.value[1])} tokens<br>${params.data.value[0]} min`
+    },
+    xAxis: {name: 'Minutes', nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    yAxis: {name: 'Tokens', nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
+    series: ['Codex', 'Claude', 'Cursor'].map(source => ({
+      name: source,
+      type: 'scatter',
+      data: rows.filter(row => row.source === source).map(row => ({
+        value: [Math.max(row.duration_minutes, 1), row.total_tokens, Math.max(12, Math.sqrt(row.cache_total || 1) / 180)],
+        session: row.session_id.slice(0, 12) + '…'
+      })),
+      symbolSize: value => value[2],
+      itemStyle: {color: C[source] || '#888', opacity: .82}
+    }))
+  });
+}
+
+function renderTempo(){
+  const rows = data.working_patterns.hourly_source_totals;
+  const chart = initChart('tempo-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 4, textStyle: {color: TX}},
+    grid: {top: 52, left: 56, right: 24, bottom: 46},
+    xAxis: {type: 'category', data: rows.map(row => `${row.hour}`), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
+    series: ['Codex', 'Claude', 'Cursor'].map(source => ({
+      name: source,
+      type: source === 'Cursor' ? 'line' : 'bar',
+      smooth: source === 'Cursor',
+      barMaxWidth: 18,
+      itemStyle: {color: C[source] || '#888'},
+      lineStyle: {width: 2, color: C[source] || '#888'},
+      data: rows.map(row => row[source] || 0)
+    }))
+  });
+  document.getElementById('tempo-notes').innerHTML = data.story.tempo_notes.map(text => `<div class="note"><i class="fa-solid fa-clock"></i><div>${text}</div></div>`).join('');
+}
+
+function renderToolRanking(){
+  const rows = data.tooling.ranking.slice(0, 20);
+  const chart = initChart('tool-ranking-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 120, right: 60, bottom: 24},
+    xAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    yAxis: {type: 'category', data: rows.map(row => row.name).reverse(), axisLabel: {color: TX, fontSize: 11}},
+    series: [{
+      type: 'bar',
+      barMaxWidth: 22,
+      data: rows.map(row => ({value: row.count, itemStyle: {color: '#ffd43b', borderRadius: [0, 6, 6, 0]}})).reverse(),
+      label: {show: true, position: 'right', color: TX, fontSize: 11}
+    }]
+  });
+}
+
+function renderToolDensity(){
+  const rows = data.working_patterns.hourly_tool_density;
+  const chart = initChart('tool-density-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 48, right: 24, bottom: 44},
+    xAxis: {type: 'category', data: rows.map(row => `${row.hour}h`), axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    series: [{type: 'bar', data: rows.map(row => ({value: row.count, itemStyle: {color: '#ffd43b', borderRadius: [6, 6, 0, 0]}}))}]
+  });
+}
+
+function renderToolBigramChart(){
+  const rows = data.tooling.bigram_chord;
+  const chart = initChart('tool-bigram-chart');
+  chart.setOption({
+    ...chartTheme(),
+    series: [{
+      type: 'graph',
+      layout: 'circular',
+      circular: {rotateLabel: true},
+      roam: true,
+      label: {show: true, color: TX},
+      lineStyle: {color: 'source', opacity: .4, width: 2, curveness: .2},
+      edgeSymbol: ['none', 'arrow'],
+      edgeSymbolSize: [0, 8],
+      data: rows.nodes.map((node, index) => ({
+        name: node.name,
+        value: node.value,
+        symbolSize: 18 + Math.min(node.value * 1.5, 36),
+        itemStyle: {color: ['#ffd43b','#ff8a50','#74c0fc','#51cf66','#b197fc','#e599f7','#ffa94d','#94d82d'][index % 8]}
+      })),
+      links: rows.links.map(link => ({source: link.source, target: link.target, value: link.value, lineStyle: {width: 1 + Math.log2(link.value + 1)}}))
+    }]
+  });
+}
+
+function renderTopCommands(){
+  const rows = data.commands.top_commands.slice(0, 15);
+  const chart = initChart('top-commands-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 110, right: 60, bottom: 24},
+    xAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    yAxis: {type: 'category', data: rows.map(row => row.command).reverse(), axisLabel: {color: TX, fontSize: 11}},
+    series: [{
+      type: 'bar',
+      barMaxWidth: 22,
+      data: rows.map(row => ({
+        value: row.count,
+        itemStyle: {color: row.failure_rate > .3 ? '#ff6b6b' : '#51cf66', borderRadius: [0, 6, 6, 0]}
+      })).reverse(),
+      label: {show: true, position: 'right', color: TX, fontSize: 11}
+    }]
+  });
+}
+
+function renderCommandSuccessChart(){
+  const rows = data.commands.daily_success;
+  const chart = initChart('command-success-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 4, textStyle: {color: TX}},
+    grid: {top: 52, left: 56, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis'},
+    xAxis: {type: 'category', data: rows.map(row => row.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    series: [
+      {name: 'Success', type: 'line', smooth: true, areaStyle: {color: 'rgba(81,207,102,.2)'}, itemStyle: {color: '#51cf66'}, lineStyle: {width: 3, color: '#51cf66'}, data: rows.map(row => row.successes)},
+      {name: 'Fail', type: 'line', smooth: true, areaStyle: {color: 'rgba(255,107,107,.16)'}, itemStyle: {color: '#ff6b6b'}, lineStyle: {width: 3, color: '#ff6b6b'}, data: rows.map(row => row.failures)}
+    ]
+  });
+}
+
+function renderEfficiencyChart(){
+  const rows = data.efficiency_metrics.daily;
+  const chart = initChart('efficiency-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 4, textStyle: {color: TX}},
+    grid: {top: 52, left: 56, right: 56, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis'},
+    xAxis: {type: 'category', data: rows.map(row => row.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: [
+      {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtPct(value)}},
+      {type: 'value', splitLine: {show: false}, axisLabel: {color: TX, formatter: value => fmtShort(value)}}
+    ],
+    series: [
+      {name: 'Reasoning Ratio', type: 'line', smooth: true, itemStyle: {color: C.reason}, lineStyle: {width: 3, color: C.reason}, data: rows.map(row => row.reasoning_ratio)},
+      {name: 'Cache Hit Rate', type: 'line', smooth: true, itemStyle: {color: C.cacheRead}, lineStyle: {width: 3, color: C.cacheRead}, data: rows.map(row => row.cache_hit_rate)},
+      {name: 'Tokens / Message', type: 'line', yAxisIndex: 1, smooth: true, itemStyle: {color: C.output}, lineStyle: {width: 3, color: C.output}, data: rows.map(row => row.tokens_per_message)}
+    ]
+  });
+}
+
+function renderProjectRanking(){
+  const rows = data.projects.ranking.slice(0, 15);
+  const chart = initChart('project-ranking-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 140, right: 60, bottom: 24},
+    tooltip: {...chartTheme().tooltip, valueFormatter: value => fmtShort(value)},
+    xAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
+    yAxis: {type: 'category', data: rows.map(row => row.project).reverse(), axisLabel: {color: TX, fontSize: 11}},
+    series: [{
+      type: 'bar',
+      barMaxWidth: 22,
+      data: rows.map(row => ({value: row.total_tokens, itemStyle: {color: '#74c0fc', borderRadius: [0, 6, 6, 0]}})).reverse(),
+      label: {show: true, position: 'right', color: TX, fontSize: 11, formatter: params => fmtShort(params.value)}
+    }]
+  });
+}
+
+function renderFileTypesChart(){
+  const rows = data.projects.file_types.slice(0, 12);
+  const chart = initChart('file-types-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {bottom: 0, textStyle: {color: TX}},
+    tooltip: {...chartTheme().tooltip, formatter: params => `${params.name}<br>${fmtInt(params.value)} touches`},
+    series: [{
+      type: 'pie',
+      radius: ['34%', '72%'],
+      center: ['50%', '45%'],
+      label: {color: TX},
+      itemStyle: {borderRadius: 8, borderColor: '#0d1016', borderWidth: 3},
+      data: rows.map((row, index) => ({
+        name: row.extension,
+        value: row.count,
+        itemStyle: {color: ['#74c0fc','#ff8a50','#ffd43b','#51cf66','#b197fc','#e599f7','#ffa94d','#94d82d','#4dabf7','#ff8787','#fcc419','#9775fa'][index % 12]}
+      }))
+    }]
+  });
+}
+
+function renderBranchActivityChart(){
+  const rows = data.projects.branch_activity.slice(0, 12);
+  const chart = initChart('branch-activity-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 120, right: 60, bottom: 24},
+    xAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    yAxis: {type: 'category', data: rows.map(row => row.branch).reverse(), axisLabel: {color: TX, fontSize: 11}},
+    series: [{
+      type: 'bar',
+      barMaxWidth: 22,
+      data: rows.map(row => ({value: row.sessions, itemStyle: {color: '#b197fc', borderRadius: [0, 6, 6, 0]}})).reverse(),
+      label: {show: true, position: 'right', color: TX, fontSize: 11}
+    }]
+  });
+}
+
+function renderProductivityChart(){
+  const rows = data.working_patterns.daily_productivity;
+  const chart = initChart('productivity-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 56, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis'},
+    xAxis: {type: 'category', data: rows.map(row => row.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', min: 0, max: 1, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    series: [{
+      name: 'Productivity',
+      type: 'line',
+      smooth: true,
+      symbolSize: 8,
+      lineStyle: {width: 3, color: '#ffd43b'},
+      itemStyle: {color: '#ffd43b'},
+      areaStyle: {color: 'rgba(255,212,59,.14)'},
+      data: rows.map(row => row.score)
+    }]
+  });
+}
+
+function renderBurnRateChart(){
+  const history = data.trend_analysis.burn_rate_30d.history;
+  const projection = data.trend_analysis.burn_rate_30d.projection;
+  const labels = [...history.map(row => row.label), ...projection.map(row => row.label)];
+  const actualSeries = [...history.map(row => row.cumulative_cost), ...projection.map(() => null)];
+  const projectedSeries = [
+    ...history.map((row, index) => index === history.length - 1 ? row.cumulative_cost : null),
+    ...projection.map(row => row.projected_cumulative_cost)
+  ];
+  const chart = initChart('burn-rate-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {top: 4, textStyle: {color: TX}},
+    grid: {top: 52, left: 56, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis', valueFormatter: value => value == null ? '-' : fmtUSD(value)},
+    xAxis: {type: 'category', data: labels, axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtUSD(value)}},
+    series: [
+      {name: 'Actual Cumulative', type: 'line', smooth: true, symbolSize: 6, lineStyle: {width: 3, color: '#74c0fc'}, itemStyle: {color: '#74c0fc'}, data: actualSeries},
+      {name: 'Projected Cumulative', type: 'line', smooth: true, symbolSize: 6, lineStyle: {width: 3, type: 'dashed', color: '#ff8a50'}, itemStyle: {color: '#ff8a50'}, data: projectedSeries}
+    ]
+  });
+}
+
+function renderCostPerToolChart(){
+  const rows = data.trend_analysis.daily_cost_per_tool_call;
+  const chart = initChart('cost-per-tool-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 56, right: 24, bottom: 44},
+    tooltip: {...chartTheme().tooltip, trigger: 'axis', valueFormatter: value => fmtUSD(value)},
+    xAxis: {type: 'category', data: rows.map(row => row.label), axisLine: {lineStyle: {color: AX}}, axisTick: {show: false}, axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtUSD(value)}},
+    series: [{
+      type: 'line',
+      smooth: true,
+      symbolSize: 7,
+      lineStyle: {width: 3, color: '#ff8a50'},
+      itemStyle: {color: '#ff8a50'},
+      areaStyle: {color: 'rgba(255,138,80,.14)'},
+      data: rows.map(row => row.value)
+    }]
+  });
+}
+
+function renderSessionDurationChart(){
+  const rows = data.session_deep_dive.duration_histogram;
+  const chart = initChart('session-duration-chart');
+  chart.setOption({
+    ...chartTheme(),
+    grid: {top: 24, left: 48, right: 24, bottom: 44},
+    xAxis: {type: 'category', data: rows.map(row => row.label), axisLabel: {color: TX}},
+    yAxis: {type: 'value', splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
+    series: [{type: 'bar', barMaxWidth: 30, data: rows.map(row => ({value: row.count, itemStyle: {color: '#51cf66', borderRadius: [6, 6, 0, 0]}}))}]
+  });
+}
+
+function renderModelRadarChart(){
+  const rows = data.trend_analysis.model_radar;
+  const chart = initChart('model-radar-chart');
+  chart.setOption({
+    ...chartTheme(),
+    legend: {bottom: 0, textStyle: {color: TX}},
+    radar: {
+      radius: '62%',
+      center: ['50%', '46%'],
+      splitNumber: 5,
+      axisName: {color: TX, fontSize: 11},
+      splitLine: {lineStyle: {color: AX}},
+      splitArea: {areaStyle: {color: ['rgba(255,255,255,.02)','rgba(255,255,255,.01)']}},
+      indicator: [
+        {name: 'Input', max: 1},
+        {name: 'Output', max: 1},
+        {name: 'Cache', max: 1},
+        {name: 'Cost', max: 1},
+        {name: 'Msgs', max: 1}
+      ]
+    },
+    series: [{
+      type: 'radar',
+      symbol: 'circle',
+      symbolSize: 5,
+      lineStyle: {width: 2},
+      areaStyle: {opacity: .08},
+      data: rows.map((row, index) => ({
+        name: row.name,
+        value: row.normalized,
+        lineStyle: {color: ['#ff6b6b','#ff8a50','#ffd43b','#74c0fc','#b197fc'][index % 5]},
+        itemStyle: {color: ['#ff6b6b','#ff8a50','#ffd43b','#74c0fc','#b197fc'][index % 5]},
+        areaStyle: {color: ['#ff6b6b','#ff8a50','#ffd43b','#74c0fc','#b197fc'][index % 5], opacity: .08}
+      }))
+    }]
+  });
+}
+
+function renderSessionTable(){
+  document.getElementById('session-table').innerHTML = `
+    <thead>
+      <tr><th>Source</th><th>Session</th><th>Tokens</th><th>Cost</th><th>Tools</th><th>Model</th><th>Window</th></tr>
+    </thead>
+    <tbody>
+      ${data.top_sessions.map(row => `
+        <tr>
+          <td><strong style="color:var(--text)">${row.source}</strong><div class="tiny">${fmtInt(row.messages)} events</div></td>
+          <td><strong style="color:var(--text)">${row.session_id.slice(0, 10)}…</strong><div class="tiny">${row.minutes} min</div></td>
+          <td>${fmtShort(row.total)}</td>
+          <td style="color:var(--cost);font-weight:700">${fmtUSD(row.cost)}</td>
+          <td>${fmtInt(row.tool_calls)}</td>
+          <td style="font-size:11px">${row.top_model}</td>
+          <td><div style="font-size:11px">${row.first_local}</div><div class="tiny">→ ${row.last_local}</div></td>
+        </tr>
+      `).join('')}
+    </tbody>`;
+}
+
+function renderDashboard(){
+  if (!data || !data.totals) {
+    return;
+  }
+  renderHero();
+  renderSourceCards();
+  renderCostCards();
+  renderStory();
+  renderDailyCostChart();
+  renderCostBreakdownChart();
+  renderModelCostChart();
+  renderCostSankey();
+  renderDailyCostTypeChart();
+  renderCostCalendar();
+  renderRoseChart();
+  renderDailyTokenChart();
+  renderTokenSankey();
+  renderHeatmap();
+  renderSourceRadar();
+  renderTokenCalendar();
+  renderTimeline();
+  renderBubble();
+  renderTempo();
+  renderToolRanking();
+  renderToolDensity();
+  renderToolBigramChart();
+  renderTopCommands();
+  renderCommandSuccessChart();
+  renderEfficiencyChart();
+  renderProjectRanking();
+  renderFileTypesChart();
+  renderBranchActivityChart();
+  renderProductivityChart();
+  renderBurnRateChart();
+  renderCostPerToolChart();
+  renderSessionDurationChart();
+  renderModelRadarChart();
+  renderSessionTable();
+
+  requestAnimationFrame(() => {
+    charts.forEach(chart => chart.resize());
+    setTimeout(() => charts.forEach(chart => chart.resize()), 100);
+  });
+}
+
+function bootDashboard(){
+  if (data && data.totals) {
+    renderDashboard();
+    return;
+  }
+  if (!isLiveMode) {
+    document.getElementById('hero-copy').textContent = '缺少可用数据。';
+    return;
+  }
+  startSseDashboard();
+}
+
+window.addEventListener('resize', () => charts.forEach(chart => chart.resize()));
+window.addEventListener('beforeunload', stopStream);
+bootDashboard();
+</script>
+</body>
+</html>
+"""
