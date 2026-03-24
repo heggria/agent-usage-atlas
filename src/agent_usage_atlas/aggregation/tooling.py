@@ -8,9 +8,7 @@ from ._context import AggContext, _percent
 
 
 def compute(ctx: AggContext) -> dict:
-    combined = Counter()
-    for counts in ctx.tool_counts_by_source.values():
-        combined.update(counts)
+    combined = ctx.combined_tool_counts
     tool_ranking = [
         {
             "name": name,
@@ -28,7 +26,8 @@ def compute(ctx: AggContext) -> dict:
             bigram_counts[pair] += 1
             tool_degrees[pair[0]] += 1
             tool_degrees[pair[1]] += 1
-    tool_bigrams = [{"from": s, "to": t, "count": c} for (s, t), c in bigram_counts.most_common(20)]
+    bigram_most_common = bigram_counts.most_common()
+    tool_bigrams = [{"from": s, "to": t, "count": c} for (s, t), c in bigram_most_common[:20]]
     chord_tools = {n for n, _ in tool_degrees.most_common(8)}
     bigram_chord = {
         "nodes": [
@@ -36,7 +35,7 @@ def compute(ctx: AggContext) -> dict:
         ],
         "links": [
             {"source": s, "target": t, "value": c}
-            for (s, t), c in bigram_counts.most_common()
+            for (s, t), c in bigram_most_common
             if s in chord_tools and t in chord_tools
         ],
     }

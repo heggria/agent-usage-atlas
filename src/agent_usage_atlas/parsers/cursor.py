@@ -8,7 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..models import CodeGenRecord, ParseResult, ScoredCommit, UsageEvent
-from ._base import _read_json_lines, _si, _ts, result_cache_files, result_cache_get, result_cache_set
+from ._base import (
+    _read_json_lines,
+    _si,
+    _ts,
+    result_cache_files,
+    result_cache_get,
+    result_cache_set,
+)
 
 CURSOR_ROOT = Path.home() / ".cursor/projects"
 CURSOR_DB = Path.home() / ".cursor/ai-tracking/ai-code-tracking.db"

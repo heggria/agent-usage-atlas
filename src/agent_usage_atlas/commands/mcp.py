@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
+
+from .. import __version__
 
 
 def add_parser(subparsers):
@@ -19,7 +22,7 @@ def add_parser(subparsers):
 
 _SERVER_INFO = {
     "name": "agent-usage-atlas",
-    "version": "0.1.0",
+    "version": __version__,
 }
 
 _TOOLS = [
@@ -93,8 +96,24 @@ def _get_payload(days: int) -> dict:
     return build_dashboard_payload(days=days)
 
 
+def _safe_days(args: dict, default: int = 7) -> int:
+    """Validate and clamp 'days' parameter to [1, 365]."""
+    try:
+        return max(1, min(365, int(args.get("days", default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_top_n(args: dict, default: int = 10) -> int:
+    """Validate and clamp 'top_n' parameter to [1, 100]."""
+    try:
+        return max(1, min(100, int(args.get("top_n", default))))
+    except (TypeError, ValueError):
+        return default
+
+
 def _handle_daily_stats(args: dict) -> str:
-    days = args.get("days", 7)
+    days = _safe_days(args, 7)
     payload = _get_payload(days)
     daily = payload.get("days", [])
     lines = [f"Daily stats for the last {days} days:", ""]
@@ -109,7 +128,7 @@ def _handle_daily_stats(args: dict) -> str:
 
 
 def _handle_cost_summary(args: dict) -> str:
-    days = args.get("days", 30)
+    days = _safe_days(args, 30)
     payload = _get_payload(days)
     lines = [f"Cost summary for the last {days} days:", ""]
 
@@ -119,9 +138,9 @@ def _handle_cost_summary(args: dict) -> str:
         cost = f"${card['cost']:.2f}" if card.get("token_capable") else "-"
         lines.append(f"  {card['source']}: {cost} ({card.get('sessions', 0)} sessions)")
 
-    # By model (top 10)
+    # By model (top 10) — model_costs lives under trend_analysis, not totals
     totals = payload.get("totals", {})
-    model_costs = totals.get("model_cost_breakdown", [])
+    model_costs = payload.get("trend_analysis", {}).get("model_costs", [])
     if model_costs:
         lines.append("")
         lines.append("By Model (top 10):")
@@ -134,8 +153,8 @@ def _handle_cost_summary(args: dict) -> str:
 
 
 def _handle_session_stats(args: dict) -> str:
-    days = args.get("days", 30)
-    top_n = args.get("top_n", 10)
+    days = _safe_days(args, 30)
+    top_n = _safe_top_n(args, 10)
     payload = _get_payload(days)
     sessions = payload.get("top_sessions", [])[:top_n]
     lines = [f"Top {top_n} sessions by cost (last {days} days):", ""]
@@ -150,10 +169,10 @@ def _handle_session_stats(args: dict) -> str:
 
 
 def _handle_model_usage(args: dict) -> str:
-    days = args.get("days", 30)
+    days = _safe_days(args, 30)
     payload = _get_payload(days)
     totals = payload.get("totals", {})
-    model_costs = totals.get("model_cost_breakdown", [])
+    model_costs = payload.get("trend_analysis", {}).get("model_costs", [])
     lines = [f"Model usage for the last {days} days:", ""]
     for mc in model_costs:
         lines.append(f"  {mc['model']}: ${mc['cost']:.4f}  ({mc.get('messages', 0)} messages)")
@@ -238,8 +257,9 @@ def run(args) -> None:
                             },
                         )
                     )
-                except Exception as e:
-                    _send(_make_error(req_id, -32603, str(e)))
+                except Exception:
+                    traceback.print_exc(file=sys.stderr)
+                    _send(_make_error(req_id, -32603, "Internal error processing request"))
 
         elif method == "ping":
             _send(_make_response(req_id, {}))

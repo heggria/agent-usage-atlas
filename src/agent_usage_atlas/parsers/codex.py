@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import warnings
 from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..models import ParseResult, SessionMeta, TaskEvent, ToolCall, TurnDuration, UsageEvent, UserMessage
-from ._base import _read_json_lines, _si, _ts, result_cache_files, result_cache_get, result_cache_set
+from ._base import (
+    _read_json_lines,
+    _si,
+    _ts,
+    result_cache_files,
+    result_cache_get,
+    result_cache_set,
+)
 
 CODEX_ROOTS = [Path.home() / ".codex/archived_sessions", Path.home() / ".codex/sessions"]
 CODEX_HOME = Path.home() / ".codex"
@@ -18,7 +27,7 @@ CODEX_HOME = Path.home() / ".codex"
 _ECR = re.compile(r"Process exited with code (\d+)")
 
 
-def parse(start_utc, now_utc) -> ParseResult:
+def parse(start_utc, now_utc, *, mtime_floor: datetime | None = None) -> ParseResult:
     """Single-pass Codex parser."""
     # Collect all JSONL + DB files for cache signature
     watch = result_cache_files("codex")
@@ -58,35 +67,39 @@ def parse(start_utc, now_utc) -> ParseResult:
     state_db = CODEX_HOME / "state_5.sqlite"
     if state_db.exists():
         try:
-            conn = sqlite3.connect(str(state_db))
-            for r in conn.execute(
-                "SELECT id, cwd, git_branch, created_at, updated_at, tokens_used, source FROM threads"
-            ).fetchall():
-                sid = str(r[0])
-                if sid not in meta_seen:
-                    cwd, br = r[1], r[2]
-                    metas.append(SessionMeta("Codex", sid, cwd, Path(cwd).name if cwd else None, br))
-                    meta_seen.add(sid)
-                created, updated = r[3], r[4]
-                if created and updated:
-                    try:
-                        t0 = _ts(created)
-                        t1 = _ts(updated)
-                        if t0 and t1 and t1 > t0 and start_utc <= t0 <= now_utc:
-                            dur_ms = int((t1 - t0).total_seconds() * 1000)
-                            if dur_ms > 0:
-                                turn_durations.append(TurnDuration("Codex", t0, sid, dur_ms))
-                    except Exception as exc:
-                        warnings.warn(f"Codex turn duration parse failed for {sid}: {exc}", stacklevel=2)
-            conn.close()
+            with sqlite3.connect(str(state_db)) as conn:
+                for r in conn.execute(
+                    "SELECT id, cwd, git_branch, created_at, updated_at, tokens_used, source FROM threads"
+                ).fetchall():
+                    sid = str(r[0])
+                    if sid not in meta_seen:
+                        cwd, br = r[1], r[2]
+                        metas.append(SessionMeta("Codex", sid, cwd, Path(cwd).name if cwd else None, br))
+                        meta_seen.add(sid)
+                    created, updated = r[3], r[4]
+                    if created and updated:
+                        try:
+                            t0 = _ts(created)
+                            t1 = _ts(updated)
+                            if t0 and t1 and t1 > t0 and start_utc <= t0 <= now_utc:
+                                dur_ms = int((t1 - t0).total_seconds() * 1000)
+                                if dur_ms > 0:
+                                    turn_durations.append(TurnDuration("Codex", t0, sid, dur_ms))
+                        except Exception as exc:
+                            warnings.warn(f"Codex turn duration parse failed for {sid}: {exc}", stacklevel=2)
         except Exception as exc:
             warnings.warn(f"Codex state_5.sqlite read failed: {exc}", stacklevel=2)
+
+    # mtime cutoff for skipping old JSONL files
+    mtime_cutoff = (mtime_floor - timedelta(hours=1)).timestamp() if mtime_floor else 0.0
 
     # Single iteration over each JSONL file
     for root in CODEX_ROOTS:
         if not root.exists():
             continue
         for path in root.rglob("*.jsonl"):
+            if mtime_cutoff and os.path.getmtime(path) < mtime_cutoff:
+                continue
             sid, token_seen, model_name = None, {}, "GPT-5 Codex"
             pending_calls = {}
 

@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timedelta
 
 from ..models import ParseResult
 from . import claude, codex, cursor, hermit
-from ._base import all_caches_hit, set_active_range
+from ._base import all_caches_hit
 from .claude import CLAUDE_HOME, CLAUDE_ROOT
 from .codex import CODEX_HOME, CODEX_ROOTS
 from .cursor import CURSOR_DB, CURSOR_ROOT
 from .hermit import HERMIT_HOMES, HERMIT_ROOTS
+
+# Fixed wide parse window — parsers always fetch this much data so the
+# result cache remains valid when the user switches time ranges.
+# The actual requested range is applied as a post-parse filter.
+_PARSE_WINDOW_DAYS = 90
 
 
 def parse_all(start_utc, now_utc, *, local_tz=None) -> tuple[ParseResult, dict, bool]:
@@ -19,16 +25,27 @@ def parse_all(start_utc, now_utc, *, local_tz=None) -> tuple[ParseResult, dict, 
 
     Returns (merged_result, claude_stats_cache, changed).
     ``changed`` is False when every parser returned cached data.
+
+    Each parser checks its own disk cache internally, so only parsers
+    whose files actually changed will re-parse.
     """
     merged = ParseResult()
-    set_active_range(start_utc, now_utc)
 
-    with ThreadPoolExecutor() as pool:
+    # Always parse with the widest window so caches survive range switches.
+    wide_start = now_utc - timedelta(days=_PARSE_WINDOW_DAYS)
+    if start_utc < wide_start:
+        wide_start = start_utc  # honour ranges wider than 90 days
+
+    # Use the original (narrow) start for mtime-based file skipping;
+    # parsers still parse all matching events for the wide_start window.
+    mtime_floor = start_utc
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {
-            pool.submit(codex.parse, start_utc, now_utc): "codex",
-            pool.submit(claude.parse, start_utc, now_utc): "claude",
-            pool.submit(cursor.parse, start_utc, now_utc, local_tz): "cursor",
-            pool.submit(hermit.parse, start_utc, now_utc): "hermit",
+            pool.submit(codex.parse, wide_start, now_utc, mtime_floor=mtime_floor): "codex",
+            pool.submit(claude.parse, wide_start, now_utc, mtime_floor=mtime_floor): "claude",
+            pool.submit(cursor.parse, wide_start, now_utc, local_tz): "cursor",
+            pool.submit(hermit.parse, wide_start, now_utc): "hermit",
         }
         f_stats = pool.submit(claude.parse_stats_cache)
 
@@ -52,6 +69,7 @@ def parse_all(start_utc, now_utc, *, local_tz=None) -> tuple[ParseResult, dict, 
 # Backward-compatible exports for server.py path scanning
 __all__ = [
     "parse_all",
+    "all_caches_hit",
     "CODEX_ROOTS",
     "CODEX_HOME",
     "CLAUDE_ROOT",

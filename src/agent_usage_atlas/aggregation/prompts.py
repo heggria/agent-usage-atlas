@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
 
 VAGUE_SET = frozenset(
@@ -102,6 +103,9 @@ def compute(ctx) -> dict:
                     "source": msg.source,
                     "timestamp": msg.timestamp.isoformat(timespec="minutes"),
                     "is_vague": is_v,
+                    "input_tokens": paired_event.uncached_input + paired_event.cache_read,
+                    "output_tokens": paired_event.output,
+                    "reasoning_tokens": paired_event.reasoning,
                 }
             )
 
@@ -112,19 +116,38 @@ def compute(ctx) -> dict:
 
     vague_ratio = vague_count / total_user_messages if total_user_messages else 0.0
 
-    # Top vague prompts by frequency
-    top_vague = [{"text": text, "count": count} for text, count in vague_counter.most_common(20)]
+    # Per-vague-prompt estimated waste cost (aggregate costs by normalized text)
+    vague_cost_by_text: dict[str, float] = defaultdict(float)
+    for p in vague_costs:
+        normalized = p["text"].strip().lower().rstrip(".!?,")
+        vague_cost_by_text[normalized] += p["cost"]
 
-    # Expensive prompts (top 50 by cost, exclude vague)
+    # Top vague prompts by frequency, enriched with waste cost
+    top_vague = [
+        {
+            "text": text,
+            "count": count,
+            "waste_cost": round(vague_cost_by_text.get(text, 0.0), 4),
+        }
+        for text, count in vague_counter.most_common(20)
+    ]
+
+    # Total cost across all prompt-event pairs (for percentage calculations)
+    total_prompt_cost = sum(p["cost"] for p in prompt_costs)
+
+    # Expensive prompts (top 50 by cost)
     expensive = sorted(prompt_costs, key=lambda p: p["cost"], reverse=True)[:50]
     expensive_out = [
         {
-            "text": p["text"],
+            "text": p["text"][:150] + "\u2026" if len(p["text"]) > 150 else p["text"],
             "tokens": p["tokens"],
             "cost": round(p["cost"], 6),
             "model": p["model"],
             "source": p["source"],
             "timestamp": p["timestamp"],
+            "input_tokens": p["input_tokens"],
+            "output_tokens": p["output_tokens"],
+            "reasoning_tokens": p["reasoning_tokens"],
         }
         for p in expensive
     ]
@@ -135,6 +158,7 @@ def compute(ctx) -> dict:
         "vague_ratio": round(vague_ratio, 4),
         "estimated_wasted_tokens": wasted_tokens,
         "estimated_wasted_cost": round(wasted_cost, 4),
+        "total_prompt_cost": round(total_prompt_cost, 4),
         "top_vague_prompts": top_vague,
         "expensive_prompts": expensive_out,
     }
@@ -147,11 +171,5 @@ def _iter_events(ctx):
 
 def _find_next_event(sorted_events, after_ts):
     """Find the first event with timestamp >= after_ts (binary search)."""
-    lo, hi = 0, len(sorted_events)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if sorted_events[mid].timestamp < after_ts:
-            lo = mid + 1
-        else:
-            hi = mid
-    return sorted_events[lo] if lo < len(sorted_events) else None
+    idx = bisect_left(sorted_events, after_ts, key=lambda e: e.timestamp)
+    return sorted_events[idx] if idx < len(sorted_events) else None

@@ -5,20 +5,35 @@ from __future__ import annotations
 from statistics import median
 
 from ._context import AggContext, _percent, _round_money, _source_rank
-from .sessions import _active_sessions
 
 
 def compute(ctx: AggContext) -> dict:
     source_cards = _source_cards(ctx)
-    active_sessions = _active_sessions(ctx)
+    active_sessions = ctx.active_sessions
     ordered_days = ctx.ordered_days
 
     grand_total = ctx.grand_total
     grand_cost = ctx.grand_cost
     grand_cache_read = ctx.grand_cache_read
     grand_cache_write = ctx.grand_cache_write
-    grand_output = sum(d["output"] for d in ordered_days)
-    grand_reasoning = sum(d["reasoning"] for d in ordered_days)
+
+    # Single-pass summation over ordered_days
+    grand_output = 0
+    grand_reasoning = 0
+    sum_cost_input = 0.0
+    sum_cost_cache_read = 0.0
+    sum_cost_cache_write = 0.0
+    sum_cost_output = 0.0
+    sum_cost_reasoning = 0.0
+    for d in ordered_days:
+        grand_output += d["output"]
+        grand_reasoning += d["reasoning"]
+        sum_cost_input += d["cost_input"]
+        sum_cost_cache_read += d["cost_cache_read"]
+        sum_cost_cache_write += d["cost_cache_write"]
+        sum_cost_output += d["cost_output"]
+        sum_cost_reasoning += d["cost_reasoning"]
+
     cache_ratio = _percent(grand_cache_read + grand_cache_write, grand_total)
     token_capable_cards = [c for c in source_cards if c["token_capable"]]
     tracked_messages = sum(c["messages"] for c in token_capable_cards)
@@ -60,11 +75,11 @@ def compute(ctx: AggContext) -> dict:
         "cost_peak_day_total": round(cost_peak_day["cost"], 4) if cost_peak_day else 0.0,
         "average_cost_per_day": round(grand_cost / max(1, len(ordered_days)), 2),
         "cost_per_message": round(grand_cost / max(1, tracked_messages), 4),
-        "cost_input": round(sum(d["cost_input"] for d in ordered_days), 2),
-        "cost_cache_read": round(sum(d["cost_cache_read"] for d in ordered_days), 2),
-        "cost_cache_write": round(sum(d["cost_cache_write"] for d in ordered_days), 2),
-        "cost_output": round(sum(d["cost_output"] for d in ordered_days), 2),
-        "cost_reasoning": round(sum(d["cost_reasoning"] for d in ordered_days), 2),
+        "cost_input": round(sum_cost_input, 2),
+        "cost_cache_read": round(sum_cost_cache_read, 2),
+        "cost_cache_write": round(sum_cost_cache_write, 2),
+        "cost_output": round(sum_cost_output, 2),
+        "cost_reasoning": round(sum_cost_reasoning, 2),
         "cache_savings_usd": round(cache_savings_usd, 2),
         "cache_savings_ratio": cache_savings_ratio,
         "tool_call_total": sum(combined_tool_counts.values()),
@@ -108,12 +123,7 @@ def _source_cards(ctx: AggContext) -> list[dict]:
 
 
 def _combined_tool_counts(ctx: AggContext):
-    from collections import Counter
-
-    combined = Counter()
-    for counts in ctx.tool_counts_by_source.values():
-        combined.update(counts)
-    return combined
+    return ctx.combined_tool_counts
 
 
 def _project_rollups(ctx: AggContext, active_sessions):

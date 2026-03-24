@@ -10,7 +10,8 @@ def render(payload: dict[str, Any], *, fmt: str = "html", **kwargs) -> str:
 
     Args:
         payload: Dashboard data dict from build_dashboard_payload().
-        fmt: Output format — "html", "json", or "csv".
+        fmt: Output format — "html", "json", "csv", "tsv", "ndjson",
+             or "prometheus".
         **kwargs: Format-specific options (e.g. poll_interval_ms for html).
 
     Returns:
@@ -28,5 +29,17 @@ def render(payload: dict[str, Any], *, fmt: str = "html", **kwargs) -> str:
         from .csv_out import render as render_csv
 
         return render_csv(payload)
+    elif fmt == "tsv":
+        from .tsv_out import render as render_tsv
+
+        return render_tsv(payload)
+    elif fmt == "ndjson":
+        from .ndjson_out import render as render_ndjson
+
+        return render_ndjson(payload)
+    elif fmt == "prometheus":
+        from .prometheus_out import render as render_prometheus
+
+        return render_prometheus(payload)
     else:
-        raise ValueError(f"Unknown format: {fmt!r}. Supported: html, json, csv")
+        raise ValueError(f"Unknown format: {fmt!r}. Supported: html, json, csv, tsv, ndjson, prometheus")

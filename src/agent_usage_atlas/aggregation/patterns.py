@@ -15,6 +15,10 @@ def compute(ctx: AggContext) -> dict:
         for src in SOURCE_ORDER:
             hst = ctx.hourly_source_totals.get(hour, {})
             row[src] = hst.get(src, 0) if isinstance(hst, dict) else 0
+        details = ctx.hourly_token_details.get(hour, {})
+        row["output"] = details.get("output", 0)
+        row["reasoning"] = details.get("reasoning", 0)
+        row["cost"] = details.get("cost", 0.0)
         hourly_rows.append(row)
 
     heatmap_rows = []

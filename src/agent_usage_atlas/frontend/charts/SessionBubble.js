@@ -10,7 +10,7 @@ function renderBubble(){
     },
     xAxis: {name: t('axisMinutes'), nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX}},
     yAxis: {name: t('axisTokens'), nameTextStyle: {color: TX}, splitLine: {lineStyle: {color: AX}}, axisLabel: {color: TX, formatter: value => fmtShort(value)}},
-    series: ['Codex', 'Claude', 'Cursor'].map(source => ({
+    series: ['Codex', 'Claude', 'Hermit', 'Cursor'].map(source => ({
       name: source,
       type: 'scatter',
       data: rows.filter(row => row.source === source).map(row => ({

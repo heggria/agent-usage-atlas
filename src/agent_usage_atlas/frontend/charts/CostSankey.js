@@ -2,9 +2,10 @@ function renderCostSankey(){
   const chart = initChart('cost-sankey-chart');
   chart.setOption({
     ...chartTheme(),
-    tooltip: {...chartTheme().tooltip, valueFormatter: value => fmtUSD(value)},
+    tooltip: makeTooltip({metricType: 'cost'}),
     series: [{
       type: 'sankey',
+      layoutAnimation: false,
       left: 8,
       right: 8,
       top: 24,

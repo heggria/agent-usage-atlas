@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import warnings
@@ -13,10 +14,10 @@ from ..models import ParseResult, SessionMeta, ToolCall, UsageEvent, UserMessage
 from ._base import _si, result_cache_get, result_cache_set
 
 _HERMIT_DIRS = [".hermit", ".hermit-test", ".hermit-dev"]
-_HERMIT_SUFFIXES = ["", "-test", "-dev"]
 
 HERMIT_HOMES = [Path.home() / d for d in _HERMIT_DIRS]
 HERMIT_ROOTS = [h / "kernel" / "state.db" for h in HERMIT_HOMES]
+
 
 def _epoch_ts(raw) -> datetime | None:
     """Convert a Unix epoch float to a UTC datetime."""
@@ -86,6 +87,11 @@ def parse(start_utc: datetime, now_utc: datetime) -> ParseResult:
     session_metas: list[SessionMeta] = []
     user_messages: list[UserMessage] = []
 
+    # Cross-home dedup: track all conversation_ids across all homes
+    # to prevent the same conversation from being counted multiple times
+    # when .hermit and .hermit-dev both track the same API calls.
+    global_conversation_events: dict[str, UsageEvent | None] = {}
+
     for home in HERMIT_HOMES:
         source = "Hermit"
         db_path = home / "kernel" / "state.db"
@@ -97,7 +103,8 @@ def parse(start_utc: datetime, now_utc: datetime) -> ParseResult:
         # Track conversation_ids from DB to deduplicate against session JSONs.
         # Maps conversation_id → UsageEvent (or None if filtered by time range)
         # so we can supplement cache tokens when DB has zeros.
-        db_conversation_events: dict[str, UsageEvent | None] = {}
+        # Shares state with global_conversation_events for cross-home dedup.
+        db_conversation_events: dict[str, UsageEvent | None] = global_conversation_events
 
         # Collect all state.db files: main kernel + archived/backup copies.
         # Multiple DB snapshots may exist due to schema migrations; we scan
@@ -123,23 +130,23 @@ def parse(start_utc: datetime, now_utc: datetime) -> ParseResult:
                 warnings.warn(f"Hermit DB connect failed for {dbp}: {exc}", stacklevel=2)
                 continue
 
-            try:
-                _parse_conversations(
-                    conn, source, model, start_utc, now_utc, events, db_conversation_events
-                )
-                _parse_receipts(conn, source, start_utc, now_utc, tool_calls)
-                _parse_tasks(conn, source, session_metas)
-                conn.close()
-            except Exception as exc:
-                warnings.warn(f"Hermit DB parse failed for {dbp}: {exc}", stacklevel=2)
+            with contextlib.closing(conn):
                 try:
-                    conn.close()
-                except Exception:
-                    pass
+                    _parse_conversations(conn, source, model, start_utc, now_utc, events, db_conversation_events)
+                    _parse_receipts(conn, source, start_utc, now_utc, tool_calls)
+                    _parse_tasks(conn, source, session_metas)
+                except Exception as exc:
+                    warnings.warn(f"Hermit DB parse failed for {dbp}: {exc}", stacklevel=2)
 
         _parse_sessions(
-            home, source, model, start_utc, now_utc,
-            user_messages, events, db_conversation_events,
+            home,
+            source,
+            model,
+            start_utc,
+            now_utc,
+            user_messages,
+            events,
+            db_conversation_events,
         )
 
     result = ParseResult(
@@ -171,6 +178,9 @@ def _parse_conversations(
         warnings.warn(f"Hermit conversations query failed: {exc}", stacklevel=2)
         return
 
+    # Build O(1) index from UsageEvent identity → list position
+    out_index: dict[int, int] = {id(evt): i for i, evt in enumerate(out)}
+
     for r in rows:
         cid = str(r["conversation_id"])
 
@@ -180,24 +190,20 @@ def _parse_conversations(
             db_conversation_events.setdefault(cid, None)
             continue
 
-        inp = _si(r["total_input_tokens"])
+        # total_input_tokens in Hermit DB is already the *uncached* portion
+        # (it is always smaller than cache_read_tokens for cached conversations)
+        uncached = _si(r["total_input_tokens"])
         out_tok = _si(r["total_output_tokens"])
         cache_read = _si(r["total_cache_read_tokens"])
         cache_write = _si(r["total_cache_creation_tokens"])
-        uncached = max(0, inp - cache_read - cache_write)
 
-        if inp or out_tok:
+        if uncached or out_tok:
             existing = db_conversation_events.get(cid)
             if existing is not None:
                 # Same conversation seen in a previous DB snapshot.
                 # Keep the higher token counts (migration may have reset them).
-                old_total = (
-                    existing.uncached_input
-                    + existing.cache_read
-                    + existing.cache_write
-                    + existing.output
-                )
-                new_total = inp + out_tok
+                old_total = existing.uncached_input + existing.cache_read + existing.cache_write + existing.output
+                new_total = uncached + cache_read + cache_write + out_tok
                 if new_total > old_total:
                     updated = replace(
                         existing,
@@ -208,8 +214,10 @@ def _parse_conversations(
                         timestamp=ts,
                     )
                     # Replace in the out list at the same position
-                    idx = out.index(existing)
+                    idx = out_index[id(existing)]
                     out[idx] = updated
+                    out_index[id(updated)] = idx
+                    del out_index[id(existing)]
                     db_conversation_events[cid] = updated
                 # Either way, already in out list — skip append.
             else:
@@ -224,6 +232,7 @@ def _parse_conversations(
                     output=out_tok,
                 )
                 out.append(evt)
+                out_index[id(evt)] = len(out) - 1
                 db_conversation_events[cid] = evt
         else:
             db_conversation_events.setdefault(cid, None)
@@ -239,12 +248,10 @@ def _parse_receipts(
     # Check if result_code column exists (schema varies across versions)
     has_result_code = False
     try:
-        cols = {
-            info[1] for info in conn.execute("PRAGMA table_info(receipts)").fetchall()
-        }
+        cols = {info[1] for info in conn.execute("PRAGMA table_info(receipts)").fetchall()}
         has_result_code = "result_code" in cols
-    except Exception:
-        pass
+    except sqlite3.Error as exc:
+        warnings.warn(f"Hermit PRAGMA table_info failed: {exc}", stacklevel=2)
 
     select_cols = "r.task_id, r.action_type, r.created_at, t.conversation_id"
     if has_result_code:
@@ -261,14 +268,9 @@ def _parse_receipts(
         return
 
     for r in rows:
-        if has_result_code:
-            ts = _epoch_ts(r["created_at"])
-            action = r["action_type"] or "unknown"
-            rc = r["result_code"]
-        else:
-            ts = _epoch_ts(r["created_at"])
-            action = r["action_type"] or "unknown"
-            rc = None
+        ts = _epoch_ts(r["created_at"])
+        action = r["action_type"] or "unknown"
+        rc = r["result_code"] if has_result_code else None
         if ts is None or ts < start_utc or ts > now_utc:
             continue
 
@@ -353,6 +355,9 @@ def _parse_sessions(
     if archive_dir.is_dir():
         json_files.extend(archive_dir.glob("*.json"))
 
+    # Build O(1) index from UsageEvent identity → list position
+    out_index: dict[int, int] = {id(evt): i for i, evt in enumerate(out_events)}
+
     # First pass: aggregate session token totals per DB-matched conversation
     # so we can supplement cache tokens on the DB event once (not per file).
     cache_supplement: dict[str, list[int]] = {}  # matched_cid → [cr, cw]
@@ -381,9 +386,7 @@ def _parse_sessions(
         cache_read = _si(data.get("total_cache_read_tokens"))
         cache_write = _si(data.get("total_cache_creation_tokens"))
 
-        matched_cid, db_evt = _find_db_event(
-            str(session_id), db_conversation_events
-        )
+        matched_cid, db_evt = _find_db_event(str(session_id), db_conversation_events)
 
         if matched_cid is not None:
             # Session overlaps with a DB conversation.  Accumulate cache
@@ -394,19 +397,35 @@ def _parse_sessions(
                 bucket[1] += cache_write
         elif inp or out_tok:
             # No DB match — create a brand-new UsageEvent.
-            uncached = max(0, inp - cache_read - cache_write)
-            out_events.append(
-                UsageEvent(
-                    source=source,
-                    timestamp=session_ts,
-                    session_id=str(session_id),
-                    model=model,
-                    uncached_input=uncached,
-                    cache_read=cache_read,
-                    cache_write=cache_write,
-                    output=out_tok,
-                )
+            # total_input_tokens is already the uncached portion
+            uncached = inp
+            evt = UsageEvent(
+                source=source,
+                timestamp=session_ts,
+                session_id=str(session_id),
+                model=model,
+                uncached_input=uncached,
+                cache_read=cache_read,
+                cache_write=cache_write,
+                output=out_tok,
             )
+            # Register in db_conversation_events for cross-home dedup
+            sid_str = str(session_id)
+            existing = db_conversation_events.get(sid_str)
+            if existing is not None:
+                # Same session seen from another home — keep higher total
+                old_total = existing.uncached_input + existing.cache_read + existing.cache_write + existing.output
+                new_total = uncached + cache_read + cache_write + out_tok
+                if new_total > old_total:
+                    idx = out_index[id(existing)]
+                    out_events[idx] = evt
+                    out_index[id(evt)] = idx
+                    del out_index[id(existing)]
+                    db_conversation_events[sid_str] = evt
+            else:
+                out_events.append(evt)
+                out_index[id(evt)] = len(out_events) - 1
+                db_conversation_events[sid_str] = evt
 
         # --- Extract UserMessages ---
         messages = data.get("messages", [])
@@ -442,16 +461,17 @@ def _parse_sessions(
     for cid, (sup_cr, sup_cw) in cache_supplement.items():
         db_evt = db_conversation_events.get(cid)
         if db_evt is not None and db_evt.cache_read == 0 and db_evt.cache_write == 0:
-            # DB had cache=0, so uncached_input currently equals total input.
-            # Re-split now that we know the real cache breakdown.
-            total_inp = db_evt.uncached_input
+            # DB had cache=0 but session JSONs have cache data.
+            # total_input_tokens in DB is already the uncached portion,
+            # so just add the cache breakdown without touching uncached_input.
             updated = replace(
                 db_evt,
                 cache_read=sup_cr,
                 cache_write=sup_cw,
-                uncached_input=max(0, total_inp - sup_cr - sup_cw),
             )
             # Replace in the out_events list at the same position
-            idx = out_events.index(db_evt)
+            idx = out_index[id(db_evt)]
             out_events[idx] = updated
+            out_index[id(updated)] = idx
+            del out_index[id(db_evt)]
             db_conversation_events[cid] = updated

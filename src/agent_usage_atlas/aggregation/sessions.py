@@ -4,46 +4,20 @@ from __future__ import annotations
 
 from statistics import median
 
-from ._context import AggContext, _percentile, _round_money
+from ._context import AggContext, _percentile
 
 
 def _active_sessions(ctx: AggContext) -> list[dict]:
-    sessions = []
-    for rollup in ctx.session_rollups.values():
-        first_local = rollup["first_local"]
-        last_local = rollup["last_local"]
-        minutes = 0.0
-        if first_local and last_local:
-            minutes = round((last_local - first_local).total_seconds() / 60, 1)
-        sessions.append(
-            {
-                "source": rollup["source"],
-                "session_id": rollup["session_id"],
-                "total": rollup["total_tokens"],
-                "uncached_input": rollup["uncached_input"],
-                "cache_read": rollup["cache_read"],
-                "cache_write": rollup["cache_write"],
-                "output": rollup["output"],
-                "reasoning": rollup["reasoning"],
-                "messages": rollup["messages"],
-                "tool_calls": rollup["tool_calls"],
-                "first_local": first_local.isoformat(timespec="minutes") if first_local else "-",
-                "last_local": last_local.isoformat(timespec="minutes") if last_local else "-",
-                "minutes": minutes,
-                "top_model": rollup["models"].most_common(1)[0][0] if rollup["models"] else "-",
-                "cost": _round_money(rollup["cost"]),
-            }
-        )
-    sessions.sort(key=lambda i: (i["total"], i["cost"], i["tool_calls"]), reverse=True)
-    return sessions
+    """Return precomputed active sessions from ctx."""
+    return ctx.active_sessions
 
 
 def compute(ctx: AggContext) -> list[dict]:
-    return _active_sessions(ctx)[:20]
+    return ctx.active_sessions[:20]
 
 
 def deep_dive(ctx: AggContext) -> dict:
-    active_sessions = _active_sessions(ctx)
+    active_sessions = ctx.active_sessions
     complexity_scatter = active_sessions[:50]
 
     duration_buckets = [

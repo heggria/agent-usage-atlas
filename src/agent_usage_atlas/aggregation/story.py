@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
-
 from ._context import SOURCE_ORDER, AggContext, _percent
 
 
@@ -22,10 +20,7 @@ def compute(ctx: AggContext) -> dict:
     total_cost_cache_read = sum(c["cost_cache_read"] for c in source_cards)
     cache_savings_usd = max(0.0, total_cache_read_full - total_cost_cache_read)
 
-    combined = Counter()
-    for counts in ctx.tool_counts_by_source.values():
-        combined.update(counts)
-    _tool_total = sum(combined.values())
+    _tool_total = sum(ctx.combined_tool_counts.values())
 
     successful_commands = sum(d["command_successes"] for d in ctx.ordered_days)
     total_commands = sum(ctx.command_counts.values())

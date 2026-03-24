@@ -172,16 +172,12 @@ def _token_burn_interval(ctx: AggContext, interval_min: int) -> list[dict]:
     if not ctx._raw_events:
         return []
 
-    bins: dict[str, dict] = defaultdict(
-        lambda: {"total": 0, "cost": 0.0, "sources": defaultdict(int)}
-    )
+    bins: dict[str, dict] = defaultdict(lambda: {"total": 0, "cost": 0.0, "sources": defaultdict(int)})
 
     for event in ctx._raw_events:
         local_ts = event.timestamp.astimezone(ctx.local_tz)
         minute = (local_ts.minute // interval_min) * interval_min
-        bin_key = local_ts.replace(minute=minute, second=0, microsecond=0).strftime(
-            "%Y-%m-%d %H:%M"
-        )
+        bin_key = f"{local_ts.year:04d}-{local_ts.month:02d}-{local_ts.day:02d} {local_ts.hour:02d}:{minute:02d}"
         total = event.total
         bins[bin_key]["total"] += total
         bins[bin_key]["cost"] += event.cost
@@ -216,41 +212,20 @@ def token_burn_multi(ctx: AggContext) -> dict[str, list[dict]]:
     """
     from collections import defaultdict
 
-    intervals = [1, 3, 5, 15, 30, 60]
+    intervals = [5, 30]
     if not ctx._raw_events:
         return {str(iv): [] for iv in intervals}
 
-    # Single pass: build 1-minute bins with pre-computed local timestamps
-    one_min_bins: dict[str, dict] = defaultdict(lambda: {"total": 0, "cost": 0.0})
-    for event in ctx._raw_events:
-        local_ts = event.timestamp.astimezone(ctx.local_tz)
-        bin_key = local_ts.strftime("%Y-%m-%d %H:%M")
-        one_min_bins[bin_key]["total"] += event.total
-        one_min_bins[bin_key]["cost"] += event.cost
-
-    # 1-min result
-    sorted_1min = sorted(one_min_bins.keys())
-    result_1 = [
-        {"t": k, "v": one_min_bins[k]["total"], "c": round(one_min_bins[k]["cost"], 4)}
-        for k in sorted_1min
-        if one_min_bins[k]["total"] > 0
-    ]
-
-    results: dict[str, list[dict]] = {"1": result_1}
-
-    # Roll up 1-min bins to coarser intervals by truncating minute
+    # Single pass: build per-event bins directly at each interval
+    results: dict[str, list[dict]] = {}
     for iv in intervals:
-        if iv == 1:
-            continue
         coarse: dict[str, dict] = defaultdict(lambda: {"total": 0, "cost": 0.0})
-        for key, b in one_min_bins.items():
-            # key is "YYYY-MM-DD HH:MM"; parse minute, truncate
-            hour_part = key[:14]  # "YYYY-MM-DD HH:"
-            minute = int(key[14:16])
-            truncated = (minute // iv) * iv
-            coarse_key = f"{hour_part}{truncated:02d}"
-            coarse[coarse_key]["total"] += b["total"]
-            coarse[coarse_key]["cost"] += b["cost"]
+        for event in ctx._raw_events:
+            local_ts = event.timestamp.astimezone(ctx.local_tz)
+            minute = (local_ts.minute // iv) * iv
+            coarse_key = local_ts.strftime("%Y-%m-%d %H:") + f"{minute:02d}"
+            coarse[coarse_key]["total"] += event.total
+            coarse[coarse_key]["cost"] += event.cost
         sorted_keys = sorted(coarse.keys())
         results[str(iv)] = [
             {"t": k, "v": coarse[k]["total"], "c": round(coarse[k]["cost"], 4)}

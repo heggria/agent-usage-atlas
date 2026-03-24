@@ -1,5 +1,44 @@
 let data = __DATA__;
 
+/* ── Dashboard lifecycle state ── */
+let dashboardState = 'init'; // 'init' | 'loading' | 'ready' | 'refreshing' | 'error'
+const _stateListeners = [];
+
+function setDashboardState(state) {
+  dashboardState = state;
+  document.documentElement.dataset.dashboardState = state;
+  _notifyStateListeners(state);
+}
+
+function getDashboardState() { return dashboardState; }
+
+function onDashboardStateChange(fn) { _stateListeners.push(fn); }
+
+function _notifyStateListeners(state) {
+  _stateListeners.forEach(fn => fn(state));
+}
+
+/* ── Error tracking ── */
+let lastError = null;
+
+function setDashboardError(err) {
+  lastError = err;
+  setDashboardState('error');
+}
+
+function getLastError() { return lastError; }
+
+/* ── Data freshness ── */
+let lastDataUpdate = 0;
+const intervalMs = Math.max(1000, Number(__POLL_MS__) || 5000);
+
+function getDataAge() { return Date.now() - lastDataUpdate; }
+
+function isDataStale() {
+  if (!isLiveMode || lastDataUpdate === 0) return false;
+  return getDataAge() > intervalMs * 2;
+}
+
 
 const pageParams = new URLSearchParams(window.location.search);
 const baseRangeParams = new URLSearchParams();
@@ -9,8 +48,9 @@ const baseInterval = pageParams.get('interval');
 const defaultDays = Number(baseRangeParams.get('days')) || 30;
 const defaultSince = baseRangeParams.get('since') || null;
 
-/* Active range tab state */
-let activeRangeKey = 'all'; /* 'all' | 'today' */
+/* Active range tab state — persist across reloads */
+const _RANGE_STORAGE_KEY = 'aua-range';
+let activeRangeKey = localStorage.getItem(_RANGE_STORAGE_KEY) || 'all';
 function _dateFmt(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
@@ -38,9 +78,15 @@ function _streamUrl(rangeKey) {
   const p = _buildParams(rangeKey);
   return '/api/dashboard/stream' + (p.toString() ? `?${p}` : '');
 }
-let dashboardApiUrl = _apiUrl('all');
-let dashboardStreamUrl = _streamUrl('all');
-const isLiveMode = data === null;
+let dashboardApiUrl = _apiUrl(activeRangeKey);
+let dashboardStreamUrl = _streamUrl(activeRangeKey);
+function setActiveRange(key) {
+  activeRangeKey = key;
+  dashboardApiUrl = _apiUrl(key);
+  dashboardStreamUrl = _streamUrl(key);
+  try { localStorage.setItem(_RANGE_STORAGE_KEY, key); } catch (_) {}
+}
+const isLiveMode = __LIVE_MODE__;
 let lastDashboardHash = '';
 let refreshTimer = null;
 let streamSource = null;
@@ -50,15 +96,18 @@ const chartCache = {};
 
 /* ── Date drill-down filter (cost family) ── */
 let selectedDate = null;
-const _dateFilterListeners = [];
-function onDateFilter(fn) { _dateFilterListeners.push(fn); }
+const _dateFilterListeners = {};
+function onDateFilter(key, fn) { _dateFilterListeners[key] = fn; }
 function setSelectedDate(date) {
   selectedDate = (date === selectedDate) ? null : date;
-  _dateFilterListeners.forEach(fn => fn(selectedDate));
+  requestAnimationFrame(() => {
+    Object.values(_dateFilterListeners).forEach(fn => fn(selectedDate));
+  });
 }
 
 function setDashboard(nextData){
   if (!nextData || typeof nextData !== 'object') {
+    if (!data) setDashboardState('loading');
     return false;
   }
   const meta = nextData._meta;
@@ -66,6 +115,9 @@ function setDashboard(nextData){
   if (!data) {
     data = nextData;
     lastDashboardHash = hash;
+    lastDataUpdate = Date.now();
+    lastError = null;
+    setDashboardState('ready');
     return true;
   }
   if (hash && hash === lastDashboardHash) {
@@ -73,5 +125,8 @@ function setDashboard(nextData){
   }
   data = nextData;
   lastDashboardHash = hash;
+  lastDataUpdate = Date.now();
+  lastError = null;
+  setDashboardState('ready');
   return true;
 }

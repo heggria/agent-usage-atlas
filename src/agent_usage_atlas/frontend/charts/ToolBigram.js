@@ -6,6 +6,8 @@ function renderToolBigramChart(){
     series: [{
       type: 'graph',
       layout: 'circular',
+      layoutAnimation: false,
+      force: {friction: 0.6},
       circular: {rotateLabel: true},
       roam: true,
       label: {show: true, color: TX},

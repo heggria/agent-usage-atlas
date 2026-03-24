@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 
 from ._context import AggContext
-from .sessions import _active_sessions
 
 
 def compute(ctx: AggContext) -> dict:
-    active_sessions = _active_sessions(ctx)
+    active_sessions = ctx.active_sessions
     project_rollups = defaultdict(
         lambda: {"project": "", "sessions": 0, "total_tokens": 0, "cost": 0.0, "tool_calls": 0}
     )

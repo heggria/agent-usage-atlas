@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
-from typing import Any
 
-SOURCE_ORDER = ["Codex", "Claude", "Cursor"]
+SOURCE_ORDER = ["Codex", "Claude", "Hermit", "Cursor"]
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
@@ -17,11 +16,11 @@ def _source_rank(name: str) -> int:
 
 
 def _round_money(value: float) -> float:
-    return round(value, 4)
+    return round(value, 2)
 
 
 def _percent(numerator: float, denominator: float) -> float:
-    return numerator / denominator if denominator else 0.0
+    return round(numerator / denominator, 4) if denominator else 0.0
 
 
 def _percentile(sorted_values: list[float], fraction: float) -> float:
@@ -35,9 +34,9 @@ def _percentile(sorted_values: list[float], fraction: float) -> float:
 class AggContext:
     """Shared context built from a single pass over events and tool_calls."""
 
-    start_local: Any
-    now_local: Any
-    local_tz: Any
+    start_local: datetime
+    now_local: datetime
+    local_tz: tzinfo
 
     # Source rollups
     source_rollups: dict = field(default_factory=dict)
@@ -50,6 +49,7 @@ class AggContext:
 
     # Hourly / heatmap indexes
     hourly_source_totals: dict = field(default_factory=dict)
+    hourly_token_details: dict = field(default_factory=dict)  # hour -> {output, reasoning, cost}
     weekday_hour_heatmap: dict = field(default_factory=dict)
 
     # Tool indexes
@@ -59,6 +59,7 @@ class AggContext:
     command_counts: Counter = field(default_factory=Counter)
     command_failures: Counter = field(default_factory=Counter)
     file_types: Counter = field(default_factory=Counter)
+    combined_tool_counts: Counter = field(default_factory=Counter)
 
     # Model indexes
     model_cost_totals: dict = field(default_factory=dict)
@@ -83,6 +84,10 @@ class AggContext:
     claude_stats_cache: dict = field(default_factory=dict)
     user_messages: list = field(default_factory=list)
     _raw_events: list = field(default_factory=list)
+    raw_tool_calls: list = field(default_factory=list)
+
+    # Precomputed active sessions (avoids redundant recomputation in sessions/totals/projects)
+    active_sessions: list = field(default_factory=list)
 
     @property
     def range_info(self) -> dict:
@@ -153,6 +158,7 @@ def build_context(
             "tool_calls": 0,
             "command_successes": 0,
             "command_failures": 0,
+            "models": {},
         }
     )
     session_rollups = defaultdict(
@@ -174,6 +180,7 @@ def build_context(
         }
     )
     hourly_source_totals = defaultdict(lambda: defaultdict(int))
+    hourly_token_details = defaultdict(lambda: {"output": 0, "reasoning": 0, "cost": 0.0})
     weekday_hour_heatmap = defaultdict(lambda: defaultdict(int))
     tool_counts_by_source = defaultdict(Counter)
     tool_sequences = defaultdict(list)
@@ -187,14 +194,21 @@ def build_context(
     )
 
     session_meta_map = {(meta.source, meta.session_id): meta for meta in session_metas}
+    _date_labels: dict[str, str] = {}
+
+    # ── Sort once, reuse everywhere ──
+    sorted_events = sorted(events, key=lambda item: item.timestamp)
+    sorted_tool_calls = sorted(tool_calls, key=lambda item: item.timestamp)
 
     # ── Pass 1: events ──
-    for event in sorted(events, key=lambda item: item.timestamp):
+    for event in sorted_events:
         local_ts = event.timestamp.astimezone(local_tz)
         date_key = local_ts.date().isoformat()
         day = daily_rollups[date_key]
         day["date"] = date_key
-        day["label"] = local_ts.strftime("%m/%d")
+        if date_key not in _date_labels:
+            _date_labels[date_key] = local_ts.strftime("%m/%d")
+        day["label"] = _date_labels[date_key]
 
         total_tokens = event.total
         cost = event.cost
@@ -235,8 +249,12 @@ def build_context(
         day["cost_reasoning"] += cost_breakdown["reasoning"]
         day["source_totals"][event.source] += total_tokens
         day["cost_sources"][event.source] += cost
+        day["models"][event.model] = day["models"].get(event.model, 0) + event._total
 
         hourly_source_totals[local_ts.hour][event.source] += total_tokens
+        hourly_token_details[local_ts.hour]["output"] += event.output
+        hourly_token_details[local_ts.hour]["reasoning"] += event.reasoning
+        hourly_token_details[local_ts.hour]["cost"] += cost
         weekday_hour_heatmap[local_ts.weekday()][local_ts.hour] += total_tokens
 
         session = session_rollups[(event.source, event.session_id)]
@@ -263,12 +281,14 @@ def build_context(
         model_data["messages"] += event.activity_messages
 
     # ── Pass 2: tool_calls ──
-    for tool_call in sorted(tool_calls, key=lambda item: item.timestamp):
+    for tool_call in sorted_tool_calls:
         local_ts = tool_call.timestamp.astimezone(local_tz)
         date_key = local_ts.date().isoformat()
         day = daily_rollups[date_key]
         day["date"] = date_key
-        day["label"] = local_ts.strftime("%m/%d")
+        if date_key not in _date_labels:
+            _date_labels[date_key] = local_ts.strftime("%m/%d")
+        day["label"] = _date_labels[date_key]
         day["tool_calls"] += 1
 
         tool_counts_by_source[tool_call.source][tool_call.tool_name] += 1
@@ -288,7 +308,8 @@ def build_context(
             file_types[Path(tool_call.file_path).suffix or "(none)"] += 1
 
         if tool_call.command:
-            first_word = tool_call.command.split()[0] if tool_call.command.split() else "(empty)"
+            parts = tool_call.command.split()
+            first_word = parts[0] if parts else "(empty)"
             command_counts[first_word] += 1
             if tool_call.exit_code is not None and tool_call.exit_code != 0:
                 command_failures[first_word] += 1
@@ -305,7 +326,9 @@ def build_context(
         date_key = current_date.isoformat()
         day = daily_rollups[date_key]
         day["date"] = date_key
-        day["label"] = current_date.strftime("%m/%d")
+        if date_key not in _date_labels:
+            _date_labels[date_key] = current_date.strftime("%m/%d")
+        day["label"] = _date_labels[date_key]
         cumulative_tokens += day["total_tokens"]
         cumulative_cost += day["cost"]
         ordered_days.append(
@@ -332,6 +355,7 @@ def build_context(
                 "tool_calls": day["tool_calls"],
                 "command_successes": day["command_successes"],
                 "command_failures": day["command_failures"],
+                "models": dict(day["models"]),
             }
         )
         current_date += timedelta(days=1)
@@ -341,8 +365,51 @@ def build_context(
     _grand_cost = sum(d["cost"] for d in ordered_days)
     _grand_cache_read = sum(d["cache_read"] for d in ordered_days)
     _grand_cache_write = sum(d["cache_write"] for d in ordered_days)
-    _peak_day = max(ordered_days, key=lambda i: i["total_tokens"], default=None)
-    _cost_peak_day = max(ordered_days, key=lambda i: i["cost"], default=None)
+    _peak_day = None
+    _cost_peak_day = None
+    _peak_tokens = -1
+    _peak_cost = -1.0
+    for d in ordered_days:
+        if d["total_tokens"] > _peak_tokens:
+            _peak_tokens = d["total_tokens"]
+            _peak_day = d
+        if d["cost"] > _peak_cost:
+            _peak_cost = d["cost"]
+            _cost_peak_day = d
+
+    # Precompute combined tool counts for downstream modules
+    _combined_tool_counts = Counter()
+    for counts in tool_counts_by_source.values():
+        _combined_tool_counts.update(counts)
+
+    # Precompute active sessions for downstream modules
+    _active_sessions = []
+    for rollup in session_rollups.values():
+        first_local = rollup["first_local"]
+        last_local = rollup["last_local"]
+        minutes = 0.0
+        if first_local and last_local:
+            minutes = round((last_local - first_local).total_seconds() / 60, 1)
+        _active_sessions.append(
+            {
+                "source": rollup["source"],
+                "session_id": rollup["session_id"],
+                "total": rollup["total_tokens"],
+                "uncached_input": rollup["uncached_input"],
+                "cache_read": rollup["cache_read"],
+                "cache_write": rollup["cache_write"],
+                "output": rollup["output"],
+                "reasoning": rollup["reasoning"],
+                "messages": rollup["messages"],
+                "tool_calls": rollup["tool_calls"],
+                "first_local": first_local.isoformat(timespec="minutes") if first_local else "-",
+                "last_local": last_local.isoformat(timespec="minutes") if last_local else "-",
+                "minutes": minutes,
+                "top_model": rollup["models"].most_common(1)[0][0] if rollup["models"] else "-",
+                "cost": _round_money(rollup["cost"]),
+            }
+        )
+    _active_sessions.sort(key=lambda i: (i["total"], i["cost"], i["tool_calls"]), reverse=True)
 
     return AggContext(
         start_local=start_local,
@@ -353,6 +420,7 @@ def build_context(
         session_rollups=dict(session_rollups),
         session_meta_map=session_meta_map,
         hourly_source_totals=dict(hourly_source_totals),
+        hourly_token_details=dict(hourly_token_details),
         weekday_hour_heatmap=dict(weekday_hour_heatmap),
         tool_counts_by_source=dict(tool_counts_by_source),
         tool_sequences=dict(tool_sequences),
@@ -360,6 +428,7 @@ def build_context(
         command_counts=command_counts,
         command_failures=command_failures,
         file_types=file_types,
+        combined_tool_counts=_combined_tool_counts,
         model_cost_totals=dict(model_cost_totals),
         model_rollups=dict(model_rollups),
         ordered_days=ordered_days,
@@ -369,7 +438,9 @@ def build_context(
         cursor_commits=cursor_commits or [],
         claude_stats_cache=claude_stats_cache or {},
         user_messages=user_messages or [],
-        _raw_events=events,
+        _raw_events=sorted_events,
+        raw_tool_calls=sorted_tool_calls,
+        active_sessions=_active_sessions,
         grand_total=_grand_total,
         grand_cost=_grand_cost,
         grand_cache_read=_grand_cache_read,

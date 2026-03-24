@@ -2,13 +2,84 @@
 
 from __future__ import annotations
 
+import logging
 import math
-import warnings
+
+_log = logging.getLogger(__name__)
+
+
+# ── Scoring helpers ──────────────────────────────────────────────────
+
+
+def _score_insight(financial_pct: float, frequency: float, actionability: float) -> int:
+    """Compute composite impact score 0-100."""
+    return round(
+        0.4 * min(100, financial_pct * 100) + 0.3 * min(100, frequency * 100) + 0.3 * min(100, actionability * 100)
+    )
+
+
+def _severity_from_score(score: int) -> str:
+    """Map impact score to severity label."""
+    if score >= 80:
+        return "critical"
+    if score >= 60:
+        return "high"
+    if score >= 40:
+        return "medium"
+    if score >= 20:
+        return "low"
+    return "info"
+
+
+def _total_cost_from_ctx(ctx) -> float:
+    """Return the pre-computed grand total cost from the context."""
+    return ctx.grand_cost
+
+
+# ── Single-pass session scan (avoids 3 separate iterations) ──────
+
+
+def _scan_sessions(ctx) -> dict:
+    """Single pass over session_rollups to collect data for marathon, tool-heavy, and context-growth rules."""
+    long_sessions = []  # (key, duration_hours)
+    heavy_keys = []  # keys of tool-heavy sessions
+    growth_keys = []  # keys of context-bloated sessions
+
+    for key, sess in ctx.session_rollups.items():
+        # marathon check: duration > 3 hours
+        first, last = sess.get("first_local"), sess.get("last_local")
+        if first and last:
+            dur_h = (last - first).total_seconds() / 3600
+            if dur_h > 3:
+                long_sessions.append((key, dur_h))
+
+        # tool-heavy check: tool_calls > 50 and messages < 10
+        if sess.get("tool_calls", 0) > 50 and sess.get("messages", 0) < 10:
+            heavy_keys.append(key)
+
+        # context-growth check: cache_read / uncached_input > 10
+        cr = sess.get("cache_read", 0)
+        ui = sess.get("uncached_input", 0)
+        if cr > 0 and ui > 0 and cr / ui > 10:
+            growth_keys.append(key)
+
+    return {
+        "long_sessions": long_sessions,
+        "heavy_keys": heavy_keys,
+        "growth_keys": growth_keys,
+    }
+
+
+# ── Main entry point ─────────────────────────────────────────────────
 
 
 def compute(ctx, prompt_data=None) -> list[dict]:
-    """Run all insight rules, return sorted by severity."""
+    """Run all insight rules, return sorted by impact_score (desc)."""
     prompt_data = prompt_data or {}
+
+    # Single pass over session_rollups for marathon/tool-heavy/context-growth
+    session_scan = _scan_sessions(ctx)
+
     rules = [
         _marathon_sessions,
         _model_mismatch,
@@ -26,32 +97,34 @@ def compute(ctx, prompt_data=None) -> list[dict]:
     results = []
     for rule in rules:
         try:
-            insight = rule(ctx, prompt_data)
+            insight = rule(ctx, prompt_data, session_scan)
             if insight:
                 results.append(insight)
-        except Exception as exc:
-            warnings.warn(f"Insight rule {rule.__name__} failed: {exc}")
+        except Exception:
+            _log.exception("Insight rule %s failed", rule.__name__)
 
-    severity_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
-    results.sort(key=lambda i: severity_order.get(i["severity"], 9))
+    results.sort(key=lambda i: i.get("impact_score", 0), reverse=True)
     return results
 
 
-def _marathon_sessions(ctx, _pd) -> dict | None:
+def _marathon_sessions(ctx, _pd, session_scan) -> dict | None:
     """Sessions longer than 3 hours."""
-    long_sessions = []
-    for key, sess in ctx.session_rollups.items():
-        first, last = sess.get("first_local"), sess.get("last_local")
-        if first and last:
-            dur_h = (last - first).total_seconds() / 3600
-            if dur_h > 3:
-                long_sessions.append((key, dur_h))
+    long_sessions = session_scan["long_sessions"]
     if not long_sessions:
         return None
     longest = max(long_sessions, key=lambda x: x[1])
     hours = round(longest[1], 1)
+    total_cost = _total_cost_from_ctx(ctx)
+    marathon_cost = sum(ctx.session_rollups[k].get("cost", 0) for k, _ in long_sessions)
+    total_sessions = max(1, len(ctx.session_rollups))
+    score = _score_insight(
+        financial_pct=marathon_cost / total_cost if total_cost > 0 else 0,
+        frequency=len(long_sessions) / total_sessions,
+        actionability=0.5,
+    )
     return {
-        "severity": "medium",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-hourglass-half",
         "title": f"发现 {len(long_sessions)} 个马拉松会话",
         "title_en": f"{len(long_sessions)} marathon session(s) detected",
@@ -64,7 +137,7 @@ def _marathon_sessions(ctx, _pd) -> dict | None:
     }
 
 
-def _model_mismatch(ctx, pd) -> dict | None:
+def _model_mismatch(ctx, pd, _ss) -> dict | None:
     """Vague prompts primarily used with expensive models (Opus)."""
     expensive = pd.get("expensive_prompts", [])
     if not expensive:
@@ -83,8 +156,16 @@ def _model_mismatch(ctx, pd) -> dict | None:
     if vague_on_opus < 2:
         return None
 
+    total_cost = _total_cost_from_ctx(ctx)
+    opus_vague_cost = sum(p.get("cost", 0) for p in expensive if "opus" in (p.get("model") or "").lower())
+    score = _score_insight(
+        financial_pct=opus_vague_cost / total_cost if total_cost > 0 else 0,
+        frequency=vague_on_opus / max(1, total_vague),
+        actionability=0.9,
+    )
     return {
-        "severity": "high",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-money-bill-wave",
         "title": "低质量 Prompt 用了贵模型",
         "title_en": "Vague prompts on expensive models",
@@ -95,7 +176,7 @@ def _model_mismatch(ctx, pd) -> dict | None:
     }
 
 
-def _low_cache_rate(ctx, _pd) -> dict | None:
+def _low_cache_rate(ctx, _pd, _ss) -> dict | None:
     """Overall cache ratio < 40%."""
     total_input = 0
     total_cache = 0
@@ -108,8 +189,17 @@ def _low_cache_rate(ctx, _pd) -> dict | None:
     if rate >= 0.4:
         return None
     pct = round(rate * 100, 1)
+    # Potential savings: difference between full-price input and cached price
+    total_cost = _total_cost_from_ctx(ctx)
+    potential_savings = (total_input - total_cache) * 0.5e-6  # rough estimate
+    score = _score_insight(
+        financial_pct=potential_savings / total_cost if total_cost > 0 else 0,
+        frequency=1.0,
+        actionability=0.8,
+    )
     return {
-        "severity": "medium",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-database",
         "title": f"缓存命中率偏低 ({pct}%)",
         "title_en": f"Low cache hit rate ({pct}%)",
@@ -120,7 +210,7 @@ def _low_cache_rate(ctx, _pd) -> dict | None:
     }
 
 
-def _vague_prompt_waste(ctx, pd) -> dict | None:
+def _vague_prompt_waste(ctx, pd, _ss) -> dict | None:
     """Vague ratio > 15%."""
     ratio = pd.get("vague_ratio", 0)
     if ratio <= 0.15:
@@ -129,8 +219,15 @@ def _vague_prompt_waste(ctx, pd) -> dict | None:
     wasted = pd.get("estimated_wasted_cost", 0)
     from ..models import fmt_usd
 
+    total_cost = _total_cost_from_ctx(ctx)
+    score = _score_insight(
+        financial_pct=wasted / total_cost if total_cost > 0 else 0,
+        frequency=ratio,
+        actionability=0.85,
+    )
     return {
-        "severity": "high",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-comment-slash",
         "title": f"模糊提示占比 {pct}%",
         "title_en": f"Vague prompts at {pct}%",
@@ -141,16 +238,22 @@ def _vague_prompt_waste(ctx, pd) -> dict | None:
     }
 
 
-def _tool_heavy(ctx, _pd) -> dict | None:
+def _tool_heavy(ctx, _pd, session_scan) -> dict | None:
     """Session with tool_calls > 50 but messages < 10."""
-    heavy = []
-    for key, sess in ctx.session_rollups.items():
-        if sess.get("tool_calls", 0) > 50 and sess.get("messages", 0) < 10:
-            heavy.append(key)
+    heavy = session_scan["heavy_keys"]
     if not heavy:
         return None
+    total_sessions = max(1, len(ctx.session_rollups))
+    total_cost = _total_cost_from_ctx(ctx)
+    heavy_cost = sum(ctx.session_rollups[k].get("cost", 0) for k in heavy)
+    score = _score_insight(
+        financial_pct=heavy_cost / total_cost if total_cost > 0 else 0,
+        frequency=len(heavy) / total_sessions,
+        actionability=0.4,
+    )
     return {
-        "severity": "low",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-gears",
         "title": f"{len(heavy)} 个工具密集型会话",
         "title_en": f"{len(heavy)} tool-heavy session(s)",
@@ -161,23 +264,25 @@ def _tool_heavy(ctx, _pd) -> dict | None:
     }
 
 
-def _off_hours(ctx, _pd) -> dict | None:
+def _off_hours(ctx, _pd, _ss) -> dict | None:
     """22:00-06:00 token share > 30%."""
-    off_hour_tokens = 0
-    total_tokens = 0
-    for hour, sources in ctx.hourly_source_totals.items():
-        hour_total = sum(sources.values())
-        total_tokens += hour_total
-        if hour >= 22 or hour < 6:
-            off_hour_tokens += hour_total
+    hourly_totals = {hour: sum(sources.values()) for hour, sources in ctx.hourly_source_totals.items()}
+    total_tokens = sum(hourly_totals.values())
     if total_tokens == 0:
         return None
+    off_hour_tokens = sum(v for h, v in hourly_totals.items() if h >= 22 or h < 6)
     ratio = off_hour_tokens / total_tokens
     if ratio <= 0.3:
         return None
     pct = round(ratio * 100, 1)
+    score = _score_insight(
+        financial_pct=ratio * 0.3,  # off-hours spend is a fraction of total
+        frequency=ratio,
+        actionability=0.2,
+    )
     return {
-        "severity": "info",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-moon",
         "title": f"深夜使用占比 {pct}%",
         "title_en": f"Off-hours usage at {pct}%",
@@ -188,7 +293,7 @@ def _off_hours(ctx, _pd) -> dict | None:
     }
 
 
-def _budget_alert(ctx, _pd) -> dict | None:
+def _budget_alert(ctx, _pd, _ss) -> dict | None:
     """30-day projection > $100."""
     days = ctx.ordered_days
     if not days:
@@ -203,8 +308,14 @@ def _budget_alert(ctx, _pd) -> dict | None:
         return None
     from ..models import fmt_usd
 
+    score = _score_insight(
+        financial_pct=min(1.0, projection / 200.0),  # values > 1.0 are clamped by _score_insight
+        frequency=1.0,
+        actionability=0.7,
+    )
     return {
-        "severity": "high",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-fire",
         "title": f"30 天投影 {fmt_usd(projection)}",
         "title_en": f"30-day projection: {fmt_usd(projection)}",
@@ -215,7 +326,7 @@ def _budget_alert(ctx, _pd) -> dict | None:
     }
 
 
-def _single_source(ctx, _pd) -> dict | None:
+def _single_source(ctx, _pd, _ss) -> dict | None:
     """One source accounts for > 90% of tokens."""
     total = sum(s["total_tokens"] for s in ctx.source_rollups.values())
     if total == 0:
@@ -224,8 +335,14 @@ def _single_source(ctx, _pd) -> dict | None:
         ratio = src["total_tokens"] / total
         if ratio > 0.9:
             pct = round(ratio * 100, 1)
+            score = _score_insight(
+                financial_pct=0.0,  # no direct financial impact
+                frequency=ratio,
+                actionability=0.1,
+            )
             return {
-                "severity": "info",
+                "severity": _severity_from_score(score),
+                "impact_score": score,
                 "icon": "fa-bullseye",
                 "title": f"{name} 占比 {pct}%",
                 "title_en": f"{name} dominates at {pct}%",
@@ -237,7 +354,7 @@ def _single_source(ctx, _pd) -> dict | None:
     return None
 
 
-def _cmd_failure_rate(ctx, _pd) -> dict | None:
+def _cmd_failure_rate(ctx, _pd, _ss) -> dict | None:
     """Command failure rate > 20%."""
     total_cmds = sum(ctx.command_counts.values())
     total_fails = sum(ctx.command_failures.values())
@@ -250,8 +367,15 @@ def _cmd_failure_rate(ctx, _pd) -> dict | None:
     # Top failing commands
     top_fails = ctx.command_failures.most_common(3)
     fail_list = ", ".join(f"`{cmd}` ({n})" for cmd, n in top_fails)
+    # Failed commands waste tokens on retries; estimate ~5% cost impact per 10% failure rate
+    score = _score_insight(
+        financial_pct=rate * 0.5,  # rough: failures waste up to half their cost
+        frequency=rate,
+        actionability=0.6,
+    )
     return {
-        "severity": "medium",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-triangle-exclamation",
         "title": f"命令失败率 {pct}%",
         "title_en": f"Command failure rate: {pct}%",
@@ -262,18 +386,22 @@ def _cmd_failure_rate(ctx, _pd) -> dict | None:
     }
 
 
-def _context_growth(ctx, _pd) -> dict | None:
+def _context_growth(ctx, _pd, session_scan) -> dict | None:
     """Session where cache_read grew > 10x."""
-    growth_sessions = []
-    for key, sess in ctx.session_rollups.items():
-        cr = sess.get("cache_read", 0)
-        ui = sess.get("uncached_input", 0)
-        if cr > 0 and ui > 0 and cr / ui > 10:
-            growth_sessions.append(key)
+    growth_sessions = session_scan["growth_keys"]
     if not growth_sessions:
         return None
+    total_sessions = max(1, len(ctx.session_rollups))
+    total_cost = _total_cost_from_ctx(ctx)
+    bloat_cost = sum(ctx.session_rollups[k].get("cost", 0) for k in growth_sessions)
+    score = _score_insight(
+        financial_pct=bloat_cost / total_cost if total_cost > 0 else 0,
+        frequency=len(growth_sessions) / total_sessions,
+        actionability=0.6,
+    )
     return {
-        "severity": "low",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-expand",
         "title": f"{len(growth_sessions)} 个会话上下文膨胀",
         "title_en": f"{len(growth_sessions)} session(s) with context bloat",
@@ -284,7 +412,7 @@ def _context_growth(ctx, _pd) -> dict | None:
     }
 
 
-def _cost_anomaly_cusum(ctx, _pd) -> dict | None:
+def _cost_anomaly_cusum(ctx, _pd, _ss) -> dict | None:
     """Detect cost regime shifts using CUSUM (Cumulative Sum) method."""
     days = ctx.ordered_days
     if not days:
@@ -334,14 +462,21 @@ def _cost_anomaly_cusum(ctx, _pd) -> dict | None:
     from ..models import fmt_usd
 
     ratio = after_avg / before_avg if before_avg > 0 else 0
+    total_cost = sum(active_costs)
+    excess_cost = (after_avg - before_avg) * (n - shift_index) if after_avg > before_avg else 0
+    score = _score_insight(
+        financial_pct=excess_cost / total_cost if total_cost > 0 else 0,
+        frequency=(n - shift_index) / n,  # fraction of period affected
+        actionability=0.5,
+    )
     return {
-        "severity": "medium",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-chart-line",
         "title": f"成本模式变化 (≈{shift_date})",
         "title_en": f"Cost regime shift detected (≈{shift_date})",
         "body": (
-            f"日均成本从 {fmt_usd(before_avg)} 上升到 {fmt_usd(after_avg)} "
-            f"({ratio:.1f}x)，CUSUM 检测到显著变化。"
+            f"日均成本从 {fmt_usd(before_avg)} 上升到 {fmt_usd(after_avg)} ({ratio:.1f}x)，CUSUM 检测到显著变化。"
         ),
         "body_en": (
             f"Daily avg cost shifted from {fmt_usd(before_avg)} to {fmt_usd(after_avg)} "
@@ -352,7 +487,7 @@ def _cost_anomaly_cusum(ctx, _pd) -> dict | None:
     }
 
 
-def _model_efficiency_ranking(ctx, _pd) -> dict | None:
+def _model_efficiency_ranking(ctx, _pd, _ss) -> dict | None:
     """Rank models by cost-per-1K-output-token and flag large gaps."""
     efficiencies = []
     for model, stats in ctx.model_rollups.items():
@@ -360,12 +495,14 @@ def _model_efficiency_ranking(ctx, _pd) -> dict | None:
         cost = stats.get("cost", 0)
         if output_tokens >= 1000 and cost > 0:
             cost_per_1k = cost / (output_tokens / 1000)
-            efficiencies.append({
-                "model": model,
-                "cost_per_1k": cost_per_1k,
-                "output_tokens": output_tokens,
-                "cost": cost,
-            })
+            efficiencies.append(
+                {
+                    "model": model,
+                    "cost_per_1k": cost_per_1k,
+                    "output_tokens": output_tokens,
+                    "cost": cost,
+                }
+            )
 
     if len(efficiencies) < 2:
         return None
@@ -386,8 +523,14 @@ def _model_efficiency_ranking(ctx, _pd) -> dict | None:
     from ..models import fmt_usd
 
     ratio = worst["cost_per_1k"] / best["cost_per_1k"]
+    score = _score_insight(
+        financial_pct=savings / total_cost if total_cost > 0 else 0,
+        frequency=1.0,
+        actionability=0.3,  # low: model capability differences limit actionability
+    )
     return {
-        "severity": "info",
+        "severity": _severity_from_score(score),
+        "impact_score": score,
         "icon": "fa-scale-balanced",
         "title": f"模型效率差距 {ratio:.0f}x",
         "title_en": f"Model efficiency gap: {ratio:.0f}x",

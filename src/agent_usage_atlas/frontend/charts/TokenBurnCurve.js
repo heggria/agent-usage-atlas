@@ -1,11 +1,11 @@
 /* ── Token Burn Curve — stock-chart style with interval tabs & MA lines ── */
 function _movingAvg(arr, w) {
   const out = [];
+  let sum = 0;
   for (let i = 0; i < arr.length; i++) {
-    if (i < w - 1) { out.push(null); continue; }
-    let s = 0;
-    for (let j = i - w + 1; j <= i; j++) s += arr[j];
-    out.push(+(s / w).toFixed(1));
+    sum += arr[i];
+    if (i >= w) sum -= arr[i - w];
+    out.push(i >= w - 1 ? +(sum / w).toFixed(1) : null);
   }
   return out;
 }
@@ -96,10 +96,9 @@ function _buildBurnOption(bins) {
 function _initBurnTabs() {
   const wrap = document.getElementById('burn-interval-tabs');
   if (!wrap) return;
-  const intervals = ['1', '3', '5', '15', '30', '60'];
+  const intervals = ['5', '30'];
   const labelKeys = {
-    '1': 'burnInterval1', '3': 'burnInterval3', '5': 'burnInterval5',
-    '15': 'burnInterval15', '30': 'burnInterval30', '60': 'burnInterval60'
+    '5': 'burnInterval5', '30': 'burnInterval30'
   };
   wrap.innerHTML = intervals.map(iv =>
     `<button class="burn-tab${iv === _burnInterval ? ' active' : ''}" data-iv="${iv}">${t(labelKeys[iv])}</button>`

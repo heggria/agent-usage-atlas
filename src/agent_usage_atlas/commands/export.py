@@ -1,4 +1,4 @@
-"""Export dashboard data in JSON or CSV format."""
+"""Export dashboard data in JSON, CSV, TSV, NDJSON, or Prometheus format."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from ..renderers import render
 def add_parser(subparsers):
     parser = subparsers.add_parser(
         "export",
-        help="Export dashboard data as JSON or CSV",
+        help="Export dashboard data as JSON, CSV, TSV, NDJSON, or Prometheus",
     )
     parser.add_argument(
         "--format",
-        choices=["json", "csv"],
+        choices=["json", "csv", "tsv", "ndjson", "prometheus"],
         default="json",
         help="Output format (default: json)",
     )

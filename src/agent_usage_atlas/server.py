@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import fcntl
+import gzip
 import hashlib
 import json
 import os
 import signal
 import sys
+
+if sys.platform != "win32":
+    import fcntl
 import threading
 import time
 import traceback
@@ -21,19 +24,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import __version__
 from .builder import build_html
 from .cli import build_dashboard_payload
 from .parsers import CLAUDE_ROOT, CODEX_ROOTS, CURSOR_ROOT, HERMIT_ROOTS
 
-_PAYLOAD_CACHE: OrderedDict[tuple[int, str | None], tuple[dict, str, tuple[int, int, int]]] = OrderedDict()
+_PAYLOAD_CACHE: OrderedDict[tuple[int, str | None], tuple[dict, str, bytes, bytes, tuple[int, int, int]]] = (
+    OrderedDict()
+)
 _PAYLOAD_LOCK = threading.Lock()
 _PAYLOAD_CACHE_MAX = 8
 _BUILD_LOCK = threading.Lock()  # serialize parse_all to avoid _ACTIVE_RANGE race
 
 # SSE connection limiting
-_SSE_CONNECTION_COUNT = 0
-_SSE_CONNECTION_LOCK = threading.Lock()
 _SSE_MAX_CONNECTIONS = 10
+_SSE_SEMAPHORE = threading.Semaphore(_SSE_MAX_CONNECTIONS)
+_SSE_ACTIVE = 0
+_SSE_ACTIVE_LOCK = threading.Lock()
 
 
 def _parse_int(value: str | None, default: int, minimum: int = 1, maximum: int = 3600) -> int:
@@ -49,6 +56,14 @@ def _parse_int(value: str | None, default: int, minimum: int = 1, maximum: int =
 def _parse_range(query: str, *, default_days: int) -> tuple[int, str | None]:
     params = parse_qs(query)
     since = params.get("since", [None])[0]
+    if since is not None:
+        if len(since) > 10:
+            since = None
+        else:
+            try:
+                datetime.strptime(since, "%Y-%m-%d")
+            except ValueError:
+                since = None
     days = _parse_int(params.get("days", [None])[0], default=default_days, minimum=1, maximum=3650)
     return days, since
 
@@ -60,7 +75,8 @@ def _sse_encode(obj: object) -> bytes:
 
 def _json_body(payload: object) -> tuple[bytes, str]:
     body = json.dumps(payload, ensure_ascii=False)
-    return body.encode("utf-8"), hashlib.sha1(body.encode("utf-8")).hexdigest()
+    encoded = body.encode("utf-8")
+    return encoded, hashlib.sha256(encoded).hexdigest()
 
 
 def _build_payload(days: int, since: str | None) -> dict:
@@ -92,19 +108,35 @@ def _iter_payload_files():
 
 _SIG_FILE_LIST: list[Path] = []
 _SIG_FILE_LIST_TIME: float = 0.0
+_SIG_FILE_LIST_LOCK = threading.Lock()
 _SIG_RESCAN_INTERVAL: float = 30.0  # seconds between full rglob rescans
+
+# TTL cache for signature result to avoid re-statting files on every call
+_SIG_CACHED_RESULT: tuple[int, int, int] = (0, 0, 0)
+_SIG_CACHED_TIME: float = 0.0
+_SIG_TTL: float = 5.0  # seconds
 
 
 def _payload_signature() -> tuple[int, int, int]:
-    global _SIG_FILE_LIST, _SIG_FILE_LIST_TIME
-    now = time.monotonic()
-    if not _SIG_FILE_LIST or (now - _SIG_FILE_LIST_TIME) > _SIG_RESCAN_INTERVAL:
-        _SIG_FILE_LIST = list(_iter_payload_files())
-        _SIG_FILE_LIST_TIME = now
+    global _SIG_FILE_LIST, _SIG_FILE_LIST_TIME, _SIG_CACHED_RESULT, _SIG_CACHED_TIME
+
+    with _SIG_FILE_LIST_LOCK:
+        now = time.monotonic()
+
+        # Return cached signature if within TTL (checked inside lock to
+        # prevent multiple threads from computing the signature simultaneously)
+        if _SIG_CACHED_TIME and (now - _SIG_CACHED_TIME) < _SIG_TTL:
+            return _SIG_CACHED_RESULT
+
+        if not _SIG_FILE_LIST or (now - _SIG_FILE_LIST_TIME) > _SIG_RESCAN_INTERVAL:
+            _SIG_FILE_LIST = list(_iter_payload_files())
+            _SIG_FILE_LIST_TIME = now
+        file_list_snapshot = list(_SIG_FILE_LIST)
+
     newest_mtime_ns = 0
     total_bytes = 0
     file_count = 0
-    for path in _SIG_FILE_LIST:
+    for path in file_list_snapshot:
         try:
             st = path.stat()
         except OSError:
@@ -112,19 +144,24 @@ def _payload_signature() -> tuple[int, int, int]:
         newest_mtime_ns = max(newest_mtime_ns, int(st.st_mtime_ns))
         total_bytes += int(st.st_size)
         file_count += 1
-    return newest_mtime_ns, total_bytes, file_count
+    result = (newest_mtime_ns, total_bytes, file_count)
+
+    with _SIG_FILE_LIST_LOCK:
+        _SIG_CACHED_RESULT = result
+        _SIG_CACHED_TIME = time.monotonic()
+        return result
 
 
-def _cached_payload(days: int, since: str | None) -> tuple[dict, str]:
+def _cached_payload(days: int, since: str | None) -> tuple[dict, str, bytes, bytes]:
     key = (days, since)
     signature = _payload_signature()
     with _PAYLOAD_LOCK:
         entry = _PAYLOAD_CACHE.get(key)
         if entry is not None:
-            payload, etag, payload_sig = entry
+            payload, etag, json_bytes, gzip_bytes, payload_sig = entry
             if payload_sig == signature:
                 _PAYLOAD_CACHE.move_to_end(key)
-                return payload, etag
+                return payload, etag, json_bytes, gzip_bytes
 
     # Serialize builds so concurrent threads don't stomp on the global
     # _ACTIVE_RANGE inside parse_all, which causes inconsistent event counts.
@@ -134,22 +171,23 @@ def _cached_payload(days: int, since: str | None) -> tuple[dict, str]:
         with _PAYLOAD_LOCK:
             entry = _PAYLOAD_CACHE.get(key)
             if entry is not None:
-                payload, etag, payload_sig = entry
+                payload, etag, json_bytes, gzip_bytes, payload_sig = entry
                 if payload_sig == signature:
                     _PAYLOAD_CACHE.move_to_end(key)
-                    return payload, etag
+                    return payload, etag, json_bytes, gzip_bytes
 
         payload = _build_payload(days=days, since=since)
-        _, etag = _json_body(payload)
+        json_bytes, etag = _json_body(payload)
+        gzip_bytes = gzip.compress(json_bytes, compresslevel=6)
         # Re-compute signature AFTER build to capture any file changes during build
         post_build_sig = _payload_signature()
-        cache_entry = (payload, etag, post_build_sig)
+        cache_entry = (payload, etag, json_bytes, gzip_bytes, post_build_sig)
         with _PAYLOAD_LOCK:
             _PAYLOAD_CACHE[key] = cache_entry
             _PAYLOAD_CACHE.move_to_end(key)
             while len(_PAYLOAD_CACHE) > _PAYLOAD_CACHE_MAX:
                 _PAYLOAD_CACHE.popitem(last=False)
-        return payload, etag
+        return payload, etag, json_bytes, gzip_bytes
 
 
 # ── Background pre-computation thread ──
@@ -222,41 +260,81 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._write_stream(parsed.query)
             return
         if parsed.path == "/health":
-            self._write_json({"status": "ok"})
+            self._write_health()
             return
         if parsed.path == "/favicon.ico":
             self.send_response(204)
+            self._send_security_headers()
             self.end_headers()
             return
-        self.send_error(404, "Not Found")
+        self.send_response(404)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self._send_security_headers()
+        self.end_headers()
+        self.wfile.write(b"Not Found")
+
+    def _send_security_headers(self) -> None:
+        """Add security headers to every response."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
 
     def _write_headers(self, status: int = 200, *, content_type: str, cache_control: str = "no-cache") -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", cache_control)
+        self._send_security_headers()
         self.end_headers()
 
-    def _write_json(self, payload: object, status: int = 200) -> None:
-        body, etag = _json_body(payload)
-        if status == 200 and self.headers.get("If-None-Match") == etag:
+    def _write_json(
+        self, payload: object, status: int = 200, *, etag: str | None = None, gzip_bytes: bytes | None = None
+    ) -> None:
+        body, computed_etag = _json_body(payload)
+        etag = etag or computed_etag
+        if status == 200 and self.headers.get("If-None-Match") == f'"{etag}"':
             self.send_response(304)
+            self._send_security_headers()
             self.end_headers()
             return
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
-        self.send_header("ETag", etag)
+        self.send_header("ETag", f'"{etag}"')
+        self.send_header("Vary", "Accept-Encoding")
+        if self._accepts_gzip():
+            body = gzip_bytes if gzip_bytes is not None else gzip.compress(body, compresslevel=6)
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
+        self._send_security_headers()
         self.end_headers()
         self.wfile.write(body)
 
+    def _accepts_gzip(self) -> bool:
+        return "gzip" in (self.headers.get("Accept-Encoding") or "")
+
     def _write_index(self) -> None:
-        template = build_html(None, poll_interval_ms=max(2000, self.default_interval * 1000))
-        self._write_headers(
-            content_type="text/html; charset=utf-8",
-            cache_control="no-store",
+        payload, _, __, ___ = _cached_payload(days=self.default_days, since=self.default_since)
+        template = build_html(payload, poll_interval_ms=max(2000, self.default_interval * 1000), live=True)
+        body = template.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Vary", "Accept-Encoding")
+        if self._accepts_gzip():
+            body = gzip.compress(body, compresslevel=6)
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _write_health(self) -> None:
+        self._write_json(
+            {
+                "status": "ok",
+                "version": __version__,
+            }
         )
-        self.wfile.write(template.encode("utf-8"))
 
     def _write_dashboard(self, query: str) -> None:
         days, since = _parse_range(query, default_days=self.default_days)
@@ -267,12 +345,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": "since must be YYYY-MM-DD"}, status=400)
                 return
         since = since or self.default_since
-        payload, _ = _cached_payload(days=days, since=since)
-        self._write_json(payload)
+        _, etag, json_bytes, gzip_bytes = _cached_payload(days=days, since=since)
+        if self.headers.get("If-None-Match") == f'"{etag}"':
+            self.send_response(304)
+            self._send_security_headers()
+            self.end_headers()
+            return
+        body = json_bytes
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("ETag", f'"{etag}"')
+        self.send_header("Vary", "Accept-Encoding")
+        if self._accepts_gzip():
+            body = gzip_bytes
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     def _write_stream(self, query: str) -> None:
-        global _SSE_CONNECTION_COUNT
-
         parsed = parse_qs(query)
         interval = _parse_int(parsed.get("interval", [None])[0], default=self.default_interval, minimum=2, maximum=60)
         days, since = _parse_range(query, default_days=self.default_days)
@@ -282,26 +375,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_response(400)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self._send_security_headers()
                 self.end_headers()
                 self.wfile.write(b"since must be YYYY-MM-DD")
                 return
         since = since or self.default_since
 
         # Enforce SSE connection limit
-        with _SSE_CONNECTION_LOCK:
-            if _SSE_CONNECTION_COUNT >= _SSE_MAX_CONNECTIONS:
-                self.send_response(503)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(b"Too many SSE connections")
-                return
-            _SSE_CONNECTION_COUNT += 1
+        if not _SSE_SEMAPHORE.acquire(blocking=False):
+            self.send_response(503)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self._send_security_headers()
+            self.end_headers()
+            self.wfile.write(b"Too many SSE connections")
+            return
+
+        with _SSE_ACTIVE_LOCK:
+            global _SSE_ACTIVE
+            _SSE_ACTIVE += 1
 
         try:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "keep-alive")
+            self._send_security_headers()
             self.end_headers()
             self.wfile.write(b": connected\n\n")
             self.wfile.flush()
@@ -311,25 +409,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
             last_write = time.monotonic()
             try:
                 while True:
-                    payload, etag = _cached_payload(days=days, since=since)
+                    _, etag, json_bytes, _gz = _cached_payload(days=days, since=since)
+                    now = time.monotonic()
                     if etag != known_etag:
                         known_etag = etag
-                        self.wfile.write(_sse_encode(payload))
+                        self.wfile.write(b"data: ")
+                        self.wfile.write(json_bytes)
+                        self.wfile.write(b"\n\n")
                         self.wfile.flush()
-                        last_write = time.monotonic()
-                    else:
+                        last_write = now
+                    elif (now - last_write) >= heartbeat_interval:
                         # Send heartbeat if idle too long
-                        now = time.monotonic()
-                        if (now - last_write) >= heartbeat_interval:
-                            self.wfile.write(b": heartbeat\n\n")
-                            self.wfile.flush()
-                            last_write = now
+                        self.wfile.write(b": heartbeat\n\n")
+                        self.wfile.flush()
+                        last_write = now
                     time.sleep(interval)
             except (BrokenPipeError, ConnectionResetError):
                 return
         finally:
-            with _SSE_CONNECTION_LOCK:
-                _SSE_CONNECTION_COUNT -= 1
+            with _SSE_ACTIVE_LOCK:
+                _SSE_ACTIVE -= 1
+            _SSE_SEMAPHORE.release()
 
 
 _LOCK_FILE = Path.home() / ".cache" / "agent-usage-atlas" / "server.lock"
@@ -383,6 +483,8 @@ def _kill_port_holder(port: int) -> None:
 
 def _acquire_lock(port: int) -> None:
     """Acquire an exclusive file lock; kill any existing server first."""
+    if sys.platform == "win32":
+        return
     global _lock_fp
     _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     _lock_fp = open(_LOCK_FILE, "r+") if _LOCK_FILE.exists() else open(_LOCK_FILE, "w")  # noqa: SIM115
@@ -420,6 +522,8 @@ def _acquire_lock(port: int) -> None:
 
 
 def _release_lock() -> None:
+    if sys.platform == "win32":
+        return
     global _lock_fp
     if _lock_fp is not None:
         try:
@@ -428,6 +532,17 @@ def _release_lock() -> None:
         except OSError:
             pass
         _lock_fp = None
+
+
+def _make_handler(days: int, since: str | None, interval: int) -> type:
+    """Return a DashboardHandler subclass with the given defaults baked in."""
+
+    class _Handler(DashboardHandler):
+        default_days = days
+        default_since = since
+        default_interval = interval
+
+    return _Handler
 
 
 def run_server(
@@ -443,14 +558,11 @@ def run_server(
 
     if since:
         datetime.strptime(since, "%Y-%m-%d")
-    DashboardHandler.default_days = days
-    DashboardHandler.default_since = since
-    DashboardHandler.default_interval = interval
 
     _cached_payload(days=days, since=since)
     _start_bg_precompute(days=days, since=since, interval=interval)
 
-    server = _ReuseAddrServer((host, port), DashboardHandler)
+    server = _ReuseAddrServer((host, port), _make_handler(days, since, interval))
     url = f"http://{host}:{port}"
     _log(host, "Agent Usage Atlas dashboard server running at %s", url)
     _log(host, "JSON: %s/api/dashboard", url)
@@ -459,9 +571,16 @@ def run_server(
     if open_browser:
         webbrowser.open(url)
 
+    def _on_signal(signum, frame):
+        _BG_STOP.set()
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _on_signal)
+
     try:
         server.serve_forever(poll_interval=0.25)
     finally:
+        _BG_STOP.set()
         server.server_close()
 
 

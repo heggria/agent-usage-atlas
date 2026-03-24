@@ -2,8 +2,24 @@
 
 from __future__ import annotations
 
-from . import daily, extended, insights, patterns, projects, prompts, sessions, story, tooling, totals, trends
+import logging
+
+from . import (
+    daily,
+    extended,
+    insights,
+    patterns,
+    projects,
+    prompts,
+    sessions,
+    story,
+    tooling,
+    totals,
+    trends,
+)
 from ._context import build_context
+
+_log = logging.getLogger(__name__)
 
 
 def aggregate(

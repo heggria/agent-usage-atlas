@@ -3,18 +3,37 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
+import warnings
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..models import ParseResult, SessionMeta, ToolCall, TurnDuration, UsageEvent, UserMessage
-from ._base import _file_signature, _read_json_lines, _si, _ts, result_cache_files, result_cache_get, result_cache_set
+from ._base import (
+    _file_signature,
+    _read_json_lines,
+    _si,
+    _ts,
+    result_cache_files,
+    result_cache_get,
+    result_cache_set,
+)
 
 CLAUDE_HOME = Path.home() / ".claude"
 CLAUDE_ROOT = CLAUDE_HOME / "projects"
 
-# Per-file incremental cache: path_str -> (file_sig, events_dict, calls, metas, meta_seen, turn_durations, user_messages)
-_PER_FILE_CACHE: dict[str, tuple] = {}
+# Per-file incremental cache:
+# path_str -> (file_sig, events_dict, calls, metas, meta_seen, turn_durations, user_messages)
+_PER_FILE_CACHE: OrderedDict[str, tuple] = OrderedDict()
+_PER_FILE_CACHE_MAX = 200
 _PER_FILE_LOCK = threading.Lock()
+
+
+def _token_key(ev: UsageEvent) -> tuple[int, int, int, int]:
+    return (ev.uncached_input, ev.cache_read, ev.cache_write, ev.output)
 
 
 def _claude_msgs(obj):
@@ -38,19 +57,25 @@ def _claude_msgs(obj):
     return out
 
 
-def _parse_single_file(path: Path, start_utc, now_utc):
-    """Parse a single JSONL file, returning per-file data structures."""
+def _parse_single_file(
+    path: Path,
+) -> tuple[dict, list[ToolCall], list[SessionMeta], set[str], list[TurnDuration], list[UserMessage]]:
+    """Parse a single JSONL file, returning per-file data structures.
+
+    No time-range filtering is applied here so the result can be cached
+    across different date-range requests.
+    """
     objs = _read_json_lines(path)
 
-    event_dedup = {}
-    calls = []
-    metas = []
-    meta_seen = set()
-    turn_durations = []
-    user_messages = []
+    event_dedup: dict[tuple[str, str], UsageEvent] = {}
+    calls: list[ToolCall] = []
+    metas: list[SessionMeta] = []
+    meta_seen: set[str] = set()
+    turn_durations: list[TurnDuration] = []
+    user_messages: list[UserMessage] = []
 
     # First pass for err_map
-    err_map = {}
+    err_map: dict[str, bool] = {}
     for obj in objs:
         if obj.get("type") == "user":
             for blk in (obj.get("message") or {}).get("content") or []:
@@ -70,9 +95,9 @@ def _parse_single_file(path: Path, start_utc, now_utc):
                 proj = Path(cwd).name if cwd and "/" in str(cwd) else str(cwd).rsplit("-", 1)[-1] if cwd else None
                 metas.append(SessionMeta("Claude", sid, cwd, proj, br))
             ts = _ts(obj.get("timestamp"))
-            if ts and start_utc <= ts <= now_utc:
+            if ts:
                 content = (obj.get("message") or {}).get("content")
-                text_parts = []
+                text_parts: list[str] = []
                 if isinstance(content, str):
                     text_parts.append(content)
                 elif isinstance(content, list):
@@ -83,21 +108,19 @@ def _parse_single_file(path: Path, start_utc, now_utc):
                             text_parts.append(blk)
                 full_text = " ".join(text_parts).strip()
                 if full_text:
-                    user_messages.append(
-                        UserMessage("Claude", ts, sid, full_text[:200], len(full_text))
-                    )
+                    user_messages.append(UserMessage("Claude", ts, sid, full_text[:200], len(full_text)))
 
         if obj_type == "system" and obj.get("subtype") == "turn_duration":
             dur = obj.get("durationMs")
             ts = _ts(obj.get("timestamp"))
-            if dur and ts and start_utc <= ts <= now_utc:
+            if dur and ts:
                 sid = str(obj.get("sessionId") or path.stem)
                 turn_durations.append(TurnDuration("Claude", ts, sid, int(dur)))
 
         for pl in _claude_msgs(obj):
             msg, u = pl["message"], pl["message"].get("usage", {})
             ts = _ts(pl.get("timestamp"))
-            if not ts or ts < start_utc or ts > now_utc:
+            if not ts:
                 continue
             mid = str(msg.get("id") or obj.get("uuid") or pl.get("timestamp"))
             sid = str(pl.get("sessionId") or obj.get("sessionId") or path.stem)
@@ -115,12 +138,7 @@ def _parse_single_file(path: Path, start_utc, now_utc):
             )
             key = (sid, mid)
             prev = event_dedup.get(key)
-            if prev is None or (ev.uncached_input, ev.cache_read, ev.cache_write, ev.output) > (
-                prev.uncached_input,
-                prev.cache_read,
-                prev.cache_write,
-                prev.output,
-            ):
+            if prev is None or _token_key(ev) > _token_key(prev):
                 event_dedup[key] = ev
 
         msg = None
@@ -133,7 +151,7 @@ def _parse_single_file(path: Path, start_utc, now_utc):
         if not isinstance(msg, dict):
             continue
         ts = _ts(obj.get("timestamp"))
-        if not ts or ts < start_utc or ts > now_utc:
+        if not ts:
             continue
         sid = str(obj.get("sessionId") or path.stem)
         for blk in msg.get("content") or []:
@@ -156,8 +174,49 @@ def _parse_single_file(path: Path, start_utc, now_utc):
     return event_dedup, calls, metas, meta_seen, turn_durations, user_messages
 
 
-def parse(start_utc, now_utc) -> ParseResult:
-    """Incremental Claude parser — only re-parses files whose mtime changed."""
+def _process_one_file(path: Path):
+    """Parse or retrieve cached result for a single file (thread-safe).
+
+    Check order: in-memory cache → full parse.
+    """
+    path_key = str(path)
+    try:
+        sig = _file_signature(path)
+    except OSError:
+        return None
+
+    # 1. In-memory cache
+    with _PER_FILE_LOCK:
+        cached_entry = _PER_FILE_CACHE.get(path_key)
+        if cached_entry is not None:
+            _PER_FILE_CACHE.move_to_end(path_key)
+
+    if cached_entry is not None and cached_entry[0] == sig:
+        return cached_entry[1:]
+
+    # 2. Full parse
+    result = _parse_single_file(path)
+    entry = (sig, *result)
+
+    with _PER_FILE_LOCK:
+        _PER_FILE_CACHE[path_key] = entry
+        _PER_FILE_CACHE.move_to_end(path_key)
+        while len(_PER_FILE_CACHE) > _PER_FILE_CACHE_MAX:
+            _PER_FILE_CACHE.popitem(last=False)
+
+    return result
+
+
+def _safe_mtime(path: Path) -> float:
+    """Return file mtime or 0 on error."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def parse(start_utc: datetime, now_utc: datetime, *, mtime_floor: datetime | None = None) -> ParseResult:
+    """Incremental Claude parser with mtime filtering and parallel I/O."""
     if not CLAUDE_ROOT.exists():
         return ParseResult()
 
@@ -165,47 +224,36 @@ def parse(start_utc, now_utc) -> ParseResult:
     if all_files is None:
         all_files = sorted(p for p in CLAUDE_ROOT.rglob("*.jsonl") if p.name != "sessions-index.json")
 
-    # Try whole-result cache first (handles case where nothing changed)
+    # Optimization: skip files not modified since before the requested range.
+    if mtime_floor is not None:
+        cutoff = (mtime_floor - timedelta(hours=1)).timestamp()
+        all_files = [f for f in all_files if _safe_mtime(f) >= cutoff]
+
+    # Try whole-result in-memory cache first
     cached = result_cache_get("claude", all_files)
     if cached is not None:
         return cached
 
-    # Per-file incremental parse: only re-parse changed files
-    time_range_key = (str(start_utc), str(now_utc))
-    merged_events = {}
-    merged_calls = []
-    merged_metas = []
-    merged_meta_seen = set()
-    merged_turn_durations = []
-    merged_user_messages = []
+    # Parallel per-file parse — each file checks memory → full parse
+    workers = min(8, len(all_files)) or 1
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        file_results = list(pool.map(_process_one_file, all_files))
 
-    for path in all_files:
-        path_key = str(path)
-        try:
-            sig = _file_signature(path)
-        except OSError:
+    # Merge per-file results
+    merged_events: dict[tuple[str, str], UsageEvent] = {}
+    merged_calls: list[ToolCall] = []
+    merged_metas: list[SessionMeta] = []
+    merged_meta_seen: set[str] = set()
+    merged_turn_durations: list[TurnDuration] = []
+    merged_user_messages: list[UserMessage] = []
+
+    for file_result in file_results:
+        if file_result is None:
             continue
-
-        # Check per-file cache
-        with _PER_FILE_LOCK:
-            cached_entry = _PER_FILE_CACHE.get(path_key)
-
-        if cached_entry is not None and cached_entry[0] == sig and cached_entry[1] == time_range_key:
-            ev_dict, calls, metas, meta_seen_set, turn_durs, user_msgs = cached_entry[2:]
-        else:
-            ev_dict, calls, metas, meta_seen_set, turn_durs, user_msgs = _parse_single_file(path, start_utc, now_utc)
-            with _PER_FILE_LOCK:
-                _PER_FILE_CACHE[path_key] = (sig, time_range_key, ev_dict, calls, metas, meta_seen_set, turn_durs, user_msgs)
-
-        # Merge per-file results
+        ev_dict, calls, metas, meta_seen_set, turn_durs, user_msgs = file_result
         for key, ev in ev_dict.items():
             prev = merged_events.get(key)
-            if prev is None or (ev.uncached_input, ev.cache_read, ev.cache_write, ev.output) > (
-                prev.uncached_input,
-                prev.cache_read,
-                prev.cache_write,
-                prev.output,
-            ):
+            if prev is None or _token_key(ev) > _token_key(prev):
                 merged_events[key] = ev
         merged_calls.extend(calls)
         for meta in metas:
@@ -215,14 +263,21 @@ def parse(start_utc, now_utc) -> ParseResult:
         merged_turn_durations.extend(turn_durs)
         merged_user_messages.extend(user_msgs)
 
+    # Apply time-range filtering after merge (keeps per-file cache range-agnostic)
+    filtered_events = [ev for ev in merged_events.values() if start_utc <= ev.timestamp <= now_utc]
+    filtered_calls = [c for c in merged_calls if start_utc <= c.timestamp <= now_utc]
+    filtered_turn_durations = [td for td in merged_turn_durations if start_utc <= td.timestamp <= now_utc]
+    filtered_user_messages = [um for um in merged_user_messages if start_utc <= um.timestamp <= now_utc]
+
     result = ParseResult(
-        events=list(merged_events.values()),
-        tool_calls=merged_calls,
+        events=filtered_events,
+        tool_calls=filtered_calls,
         session_metas=merged_metas,
-        turn_durations=merged_turn_durations,
-        user_messages=merged_user_messages,
+        turn_durations=filtered_turn_durations,
+        user_messages=filtered_user_messages,
     )
     result_cache_set("claude", all_files, result)
+
     return result
 
 
@@ -234,7 +289,8 @@ def parse_stats_cache():
     try:
         with open(cache_path, encoding="utf-8") as f:
             raw = json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError) as exc:
+        warnings.warn(f"Failed to read stats-cache.json: {exc}", stacklevel=2)
         return {}
     return {
         "daily_activity": raw.get("dailyActivity", []),

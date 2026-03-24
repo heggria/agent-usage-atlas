@@ -22,9 +22,13 @@ def compute(ctx: AggContext, claude_stats=None) -> dict:
 
 def _turn_durations(ctx: AggContext) -> dict:
     dur_by_source = defaultdict(list)
+    daily_dur = defaultdict(list)
+    dur_all = []
     for td in ctx.turn_durations:
         dur_by_source[td.source].append(td.duration_ms)
-    dur_all = [td.duration_ms for td in ctx.turn_durations]
+        dur_all.append(td.duration_ms)
+        local_ts = td.timestamp.astimezone(ctx.local_tz)
+        daily_dur[local_ts.date().isoformat()].append(td.duration_ms)
     sorted_dur = sorted(dur_all)
 
     stats = {
@@ -51,11 +55,6 @@ def _turn_durations(ctx: AggContext) -> dict:
         (">5m", 300000, float("inf")),
     ]
     histogram = [{"label": lbl, "count": sum(1 for d in dur_all if lo <= d < hi)} for lbl, lo, hi in dur_buckets]
-
-    daily_dur = defaultdict(list)
-    for td in ctx.turn_durations:
-        local_ts = td.timestamp.astimezone(ctx.local_tz)
-        daily_dur[local_ts.date().isoformat()].append(td.duration_ms)
 
     daily = []
     current_date = ctx.start_local.date()

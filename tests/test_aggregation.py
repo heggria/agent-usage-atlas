@@ -49,8 +49,8 @@ class TestPercentile:
 
 
 class TestRoundMoney:
-    def test_rounds_to_four_decimals(self):
-        assert _round_money(1.23456789) == 1.2346
+    def test_rounds_to_two_decimals(self):
+        assert _round_money(1.23456789) == 1.23
 
     def test_zero(self):
         assert _round_money(0.0) == 0.0

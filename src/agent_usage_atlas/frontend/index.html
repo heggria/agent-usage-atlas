@@ -3,22 +3,47 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Interactive dashboard for AI coding agent usage analytics.">
 <title>Agent Usage Atlas</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%234f46e5'/><stop offset='100%25' stop-color='%2306b6d4'/></linearGradient></defs><rect width='100' height='100' rx='20' fill='url(%23g)'/><text x='50' y='68' font-size='58' text-anchor='middle' fill='white' font-family='system-ui' font-weight='700'>A</text><circle cx='76' cy='26' r='10' fill='%23fbbf24'/></svg>">
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6/css/all.min.css" media="print" onload="this.media='all'">
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6/css/all.min.css" integrity="sha384-nRgPTkuX86pH8yjPJUAFuASXQSSl2/bBUiNV47vSYpKFxHJhbcrGnmlYpYJMeD7a" crossorigin="anonymous" media="print" onload="this.media='all'">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js" integrity="sha384-pPi0zxBAoDu6+JXW/C68UZLvBUUtU+7zonhif43rqj7pxsGyqyqzcian2Rj37Rss" crossorigin="anonymous"></script>
 <style>
 __CSS__
 </style>
+<style media="print">
+.quick-nav,.back-top,.loading-screen,.skip-link,.toast,#toast-container,
+.show-more-btn,.divider .chevron,.range-tabs,.burn-tabs,.lang-btn,.theme-btn,kbd{display:none !important}
+body{background:#fff !important;color:#000 !important}
+.page{max-width:100%;padding:10px}
+.p,.src,.cc,.sc{box-shadow:none;border:1px solid #ddd;break-inside:avoid}
+.hero-wrap{backdrop-filter:none}
+.hero-wrap::before{display:none}
+h1{-webkit-text-fill-color:#000;background:none !important;animation:none !important}
+.chart{break-inside:avoid;page-break-inside:avoid}
+.section-wrap.collapsed{max-height:none !important;opacity:1 !important;overflow:visible !important;pointer-events:auto !important}
+.section-more{max-height:none !important;opacity:1 !important;overflow:visible !important}
+*{animation:none !important;transition:none !important}
+</style>
 </head>
 <body>
-<div class="toast" id="toast"></div>
+<a href="#hero-title" class="skip-link" style="position:absolute;top:-40px;left:0;background:var(--accent);color:#000;padding:8px 16px;z-index:10000;transition:top 0.2s;font-weight:600;text-decoration:none"
+   onfocus="this.style.top='0'" onblur="this.style.top='-40px'">Skip to content</a>
+<div id="loading-screen" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg,#0d1016);z-index:9998">
+  <div style="text-align:center;color:var(--text-muted,#666)">
+    <div style="width:40px;height:40px;border:3px solid var(--border,#333);border-top-color:var(--accent,#f0b866);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px"></div>
+    <div style="font-size:14px">Loading dashboard...</div>
+  </div>
+</div>
+<noscript><div style="padding:40px;text-align:center;font-size:16px">This dashboard requires JavaScript to render.</div></noscript>
+<div id="toast-container" style="position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:380px;width:100%;"></div>
 <main class="page">
   <section class="g g-wide">
     <article class="p hero-wrap">
-      <div class="eyebrow"><i class="fa-solid fa-chart-line"></i> Agent Usage Atlas<span class="live-badge off" id="live-badge"><span class="dot"></span>Static</span><button class="lang-btn" id="lang-btn" onclick="toggleLang()" aria-label="Toggle language">&#127760; ZH</button><button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme"><i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i></button></div>
+      <div class="eyebrow"><i class="fa-solid fa-chart-line"></i> Agent Usage Atlas<span class="live-badge off" id="live-badge"><span class="dot"></span>Static</span><button class="lang-btn" id="lang-btn" onclick="toggleLang()" aria-label="Toggle language">&#127760; ZH</button><button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme"><i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i></button><kbd style="font-size:10px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);margin-left:8px">&#8984;K</kbd></div>
       <div class="range-tabs" id="range-tabs"></div>
-      <h1 id="hero-title"></h1>
+      <h1 id="hero-title">Agent Usage Atlas</h1>
       <p class="hero-copy" id="hero-copy"></p>
       <div class="chips" id="hero-chips"></div>
       <div class="hero-stats" id="hero-stats"></div>
@@ -28,13 +53,13 @@ __CSS__
   </section>
 
   <button class="divider" type="button" id="sec-sources" aria-expanded="true" aria-controls="wrap-sec-sources"><i class="fa-solid fa-layer-group"></i> <span data-i18n="divSources"></span><i class="fa-solid fa-chevron-down chevron" aria-hidden="true"></i></button>
-  <div class="section-wrap" id="wrap-sec-sources" data-section="sec-sources" role="region">
+  <div class="section-wrap" id="wrap-sec-sources" data-section="sec-sources" role="region" aria-labelledby="sec-sources">
   <section class="g g3" id="source-cards"></section>
   </div>
 
   <!-- ═══ Cost & Tokens (merged) ═══ -->
   <button class="divider" type="button" id="sec-cost-tokens" aria-expanded="true" aria-controls="wrap-sec-cost-tokens"><i class="fa-solid fa-dollar-sign"></i> <span data-i18n="divCostTokens"></span><i class="fa-solid fa-chevron-down chevron" aria-hidden="true"></i></button>
-  <div class="section-wrap" id="wrap-sec-cost-tokens" data-section="sec-cost-tokens" role="region">
+  <div class="section-wrap" id="wrap-sec-cost-tokens" data-section="sec-cost-tokens" role="region" aria-labelledby="sec-cost-tokens">
   <!-- Token Burn Curve — full-width hero chart with interval tabs -->
   <article class="p burn-hero">
     <div class="sh"><h2 data-i18n="chartTokenBurn"></h2><span data-i18n="chartTokenBurnSub"></span><div class="burn-tabs" id="burn-interval-tabs"></div></div>
@@ -89,7 +114,7 @@ __CSS__
 
   <!-- ═══ Activity & Sessions (merged) ═══ -->
   <button class="divider" type="button" id="sec-activity" aria-expanded="true" aria-controls="wrap-sec-activity"><i class="fa-solid fa-clock"></i> <span data-i18n="divActivitySessions"></span><i class="fa-solid fa-chevron-down chevron" aria-hidden="true"></i></button>
-  <div class="section-wrap" id="wrap-sec-activity" data-section="sec-activity" role="region">
+  <div class="section-wrap" id="wrap-sec-activity" data-section="sec-activity" role="region" aria-labelledby="sec-activity">
   <section class="g g2">
     <article class="p"><div class="sh"><h2 data-i18n="chartHeatmap"></h2><span data-i18n="chartHeatmapSub"></span></div><div class="chart tall" id="heatmap-chart"></div></article>
     <article class="p"><div class="sh"><h2 data-i18n="chartSourceRadar"></h2><span data-i18n="chartSourceRadarSub"></span></div><div class="chart tall" id="source-radar-chart"></div></article>
@@ -124,7 +149,7 @@ __CSS__
 
   <!-- ═══ Tooling & Projects (merged) ═══ -->
   <button class="divider" type="button" id="sec-tooling" aria-expanded="true" aria-controls="wrap-sec-tooling"><i class="fa-solid fa-wrench"></i> <span data-i18n="divToolingProjects"></span><i class="fa-solid fa-chevron-down chevron" aria-hidden="true"></i></button>
-  <div class="section-wrap" id="wrap-sec-tooling" data-section="sec-tooling" role="region">
+  <div class="section-wrap" id="wrap-sec-tooling" data-section="sec-tooling" role="region" aria-labelledby="sec-tooling">
   <section class="g g2">
     <article class="p"><div class="sh"><h2 data-i18n="chartToolRank"></h2><span data-i18n="chartToolRankSub"></span></div><div class="chart sm" id="tool-ranking-chart"></div></article>
     <article class="p"><div class="sh"><h2 data-i18n="chartProjectRank"></h2><span data-i18n="chartProjectRankSub"></span></div><div class="chart sm" id="project-ranking-chart"></div></article>
@@ -156,7 +181,7 @@ __CSS__
 
   <!-- ═══ Insights (default collapsed) ═══ -->
   <button class="divider" type="button" id="sec-insights" aria-expanded="true" aria-controls="wrap-sec-insights"><i class="fa-solid fa-lightbulb"></i> <span data-i18n="divInsights"></span><i class="fa-solid fa-chevron-down chevron" aria-hidden="true"></i></button>
-  <div class="section-wrap" id="wrap-sec-insights" data-section="sec-insights" role="region">
+  <div class="section-wrap" id="wrap-sec-insights" data-section="sec-insights" role="region" aria-labelledby="sec-insights">
   <section class="g g4" id="vague-stats"></section>
   <section class="g g-wide mt">
     <article class="p">
@@ -173,7 +198,7 @@ __CSS__
 
   <!-- ═══ Leaderboard (default collapsed) ═══ -->
   <button class="divider" type="button" id="sec-leaderboard" aria-expanded="true" aria-controls="wrap-sec-leaderboard"><i class="fa-solid fa-list-ol"></i> <span data-i18n="divLeaderboard"></span><i class="fa-solid fa-chevron-down chevron" aria-hidden="true"></i></button>
-  <div class="section-wrap" id="wrap-sec-leaderboard" data-section="sec-leaderboard" role="region">
+  <div class="section-wrap" id="wrap-sec-leaderboard" data-section="sec-leaderboard" role="region" aria-labelledby="sec-leaderboard">
   <section>
     <article class="p">
       <div class="table-wrap"><table id="session-table"></table></div>
@@ -183,12 +208,12 @@ __CSS__
   </div>
 
   <nav class="quick-nav" id="quick-nav" aria-label="Section navigation">
-    <a href="#sec-sources"><i class="fa-solid fa-layer-group"></i><span>Sources</span></a>
+    <a href="#sec-sources"><i class="fa-solid fa-layer-group"></i><span data-i18n="navSources">Sources</span></a>
     <a href="#sec-cost-tokens"><i class="fa-solid fa-dollar-sign"></i><span data-i18n="navCostTokens">Cost</span></a>
     <a href="#sec-activity"><i class="fa-solid fa-clock"></i><span data-i18n="navActivity">Activity</span></a>
     <a href="#sec-tooling"><i class="fa-solid fa-wrench"></i><span data-i18n="navTooling">Tooling</span></a>
-    <a href="#sec-insights"><i class="fa-solid fa-lightbulb"></i><span>Insights</span></a>
-    <a href="#sec-leaderboard"><i class="fa-solid fa-list-ol"></i><span>Board</span></a>
+    <a href="#sec-insights"><i class="fa-solid fa-lightbulb"></i><span data-i18n="navInsights">Insights</span></a>
+    <a href="#sec-leaderboard"><i class="fa-solid fa-list-ol"></i><span data-i18n="navLeaderboard">Board</span></a>
   </nav>
   <button class="back-top" id="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top"><i class="fa-solid fa-arrow-up" aria-hidden="true"></i></button>
 </main>

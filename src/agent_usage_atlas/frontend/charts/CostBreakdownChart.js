@@ -34,7 +34,7 @@ function renderCostBreakdownChart(){
   chart.setOption({
     ...chartTheme(),
     legend: {bottom: 0, textStyle: {color: TX}},
-    tooltip: {...chartTheme().tooltip, formatter: params => `${params.name}<br>${fmtUSD(params.value)} (${params.percent}%)`},
+    tooltip: makeTooltip({formatter: params => `${params.name}<br>${fmtUSD(params.value)} (${params.percent}%)`}),
     series: [{
       type: 'pie',
       radius: ['40%', '74%'],
@@ -44,5 +44,5 @@ function renderCostBreakdownChart(){
       data: items.map(item => ({name: item.name, value: +item.value.toFixed(4), itemStyle: {color: item.color}}))
     }]
   });
-  onDateFilter(_applyFilter);
+  onDateFilter('cost-breakdown-chart', _applyFilter);
 }

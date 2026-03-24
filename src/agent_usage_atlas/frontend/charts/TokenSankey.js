@@ -4,6 +4,7 @@ function renderTokenSankey(){
     ...chartTheme(),
     series: [{
       type: 'sankey',
+      layoutAnimation: false,
       left: 8,
       right: 8,
       top: 24,
@@ -22,7 +23,7 @@ function renderTokenSankey(){
   const snKey = lang === 'en' ? 'source_notes_en' : 'source_notes';
   const jkKey = lang === 'en' ? 'jokes_en' : 'jokes';
   document.getElementById('source-notes').innerHTML = [
-    ...(data.story[snKey] || data.story.source_notes).map(txt => `<div class="note"><i class="fa-solid fa-circle-info"></i><div>${txt}</div></div>`),
-    ...(data.story[jkKey] || data.story.jokes).map(txt => `<div class="note"><i class="fa-solid fa-face-smile"></i><div>${txt}</div></div>`)
+    ...(data.story[snKey] || data.story.source_notes).map(txt => `<div class="note"><i class="fa-solid fa-circle-info"></i><div>${_escHtml(txt)}</div></div>`),
+    ...(data.story[jkKey] || data.story.jokes).map(txt => `<div class="note"><i class="fa-solid fa-face-smile"></i><div>${_escHtml(txt)}</div></div>`)
   ].join('');
 }
