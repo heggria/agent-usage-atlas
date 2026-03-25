@@ -24,10 +24,7 @@ def add_parser(subparsers):
 
 
 def run(args) -> None:
-    try:
-        dashboard = build_dashboard_payload(days=args.days, since=args.since)
-    except ValueError as exc:
-        raise SystemExit(f"Invalid --since date format: {exc}") from exc
+    dashboard = build_dashboard_payload(days=args.days, since=args.since)
 
     content = render(dashboard, fmt=args.format)
     output_path = args.output

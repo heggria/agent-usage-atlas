@@ -38,7 +38,7 @@ def _compute_weekly_trend(ordered_days: list[dict]) -> list[dict]:
         if week_key not in weekly_totals:
             week_order.append(week_key)
         for source, tokens in day["source_totals"].items():
-            weekly_totals[week_key][source] += tokens
+            weekly_totals[week_key][source] += tokens or 0
 
     trend: list[dict] = []
     for week_key in week_order:
@@ -88,11 +88,17 @@ def _build_suggestions(agent_shares: dict[str, float], num_sources: int, score: 
         return suggestions
 
     if num_sources == 1:
-        sole_source = next(iter(agent_shares))
-        suggestions.append(
-            f"You are only using {sole_source}. "
-            "Consider trying other agents to compare capabilities and find the best fit for different tasks."
-        )
+        if agent_shares:
+            sole_source = next(iter(agent_shares))
+            suggestions.append(
+                f"You are only using {sole_source}. "
+                "Consider trying other agents to compare capabilities and find the best fit for different tasks."
+            )
+        else:
+            suggestions.append(
+                "Only one agent source detected but no usage data recorded yet. "
+                "Consider trying other agents to compare capabilities."
+            )
         return suggestions
 
     dominant_threshold = 0.70
@@ -148,7 +154,7 @@ def compute(ctx: AggContext) -> dict:
         }
 
     # Per-source shares
-    agent_shares = {source: round(rollup["total_tokens"] / grand_total, 4) for source, rollup in source_rollups.items()}
+    agent_shares = {source: round((rollup["total_tokens"] or 0) / grand_total, 4) for source, rollup in source_rollups.items()}
 
     shares = list(agent_shares.values())
     entropy = round(_shannon_entropy(shares), 4)

@@ -166,22 +166,23 @@ def efficiency(ctx: AggContext) -> dict:
 
 
 def _token_burn_interval(ctx: AggContext, interval_min: int) -> list[dict]:
-    """Bucket raw events into *interval_min*-minute bins with per-source breakdown."""
+    """Bucket raw events into *interval_min*-minute bins."""
     from collections import defaultdict
+
+    if interval_min <= 0:
+        raise ValueError(f"interval_min must be a positive integer, got {interval_min!r}")
 
     if not ctx._raw_events:
         return []
 
-    bins: dict[str, dict] = defaultdict(lambda: {"total": 0, "cost": 0.0, "sources": defaultdict(int)})
+    bins: dict[str, dict] = defaultdict(lambda: {"total": 0, "cost": 0.0})
 
     for event in ctx._raw_events:
         local_ts = event.timestamp.astimezone(ctx.local_tz)
         minute = (local_ts.minute // interval_min) * interval_min
         bin_key = f"{local_ts.year:04d}-{local_ts.month:02d}-{local_ts.day:02d} {local_ts.hour:02d}:{minute:02d}"
-        total = event.total
-        bins[bin_key]["total"] += total
+        bins[bin_key]["total"] += event.total
         bins[bin_key]["cost"] += event.cost
-        bins[bin_key]["sources"][event.source] += total
 
     sorted_keys = sorted(bins.keys())
     result = []

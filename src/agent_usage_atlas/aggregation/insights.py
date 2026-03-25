@@ -181,8 +181,8 @@ def _low_cache_rate(ctx, _pd, _ss) -> dict | None:
     total_input = 0
     total_cache = 0
     for src in ctx.source_rollups.values():
-        total_input += src["uncached_input"] + src["cache_read"]
-        total_cache += src["cache_read"]
+        total_input += src.get("uncached_input", 0) + src.get("cache_read", 0)
+        total_cache += src.get("cache_read", 0)
     if total_input == 0:
         return None
     rate = total_cache / total_input
@@ -328,11 +328,11 @@ def _budget_alert(ctx, _pd, _ss) -> dict | None:
 
 def _single_source(ctx, _pd, _ss) -> dict | None:
     """One source accounts for > 90% of tokens."""
-    total = sum(s["total_tokens"] for s in ctx.source_rollups.values())
+    total = sum(s.get("total_tokens", 0) for s in ctx.source_rollups.values())
     if total == 0:
         return None
     for name, src in ctx.source_rollups.items():
-        ratio = src["total_tokens"] / total
+        ratio = src.get("total_tokens", 0) / total
         if ratio > 0.9:
             pct = round(ratio * 100, 1)
             score = _score_insight(

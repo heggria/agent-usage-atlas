@@ -23,7 +23,7 @@ def _sparkline(values: list[float]) -> str:
     lo = min(values)
     hi = max(values)
     rng = hi - lo if hi > lo else 1.0
-    return "".join(_SPARK_CHARS[min(7, int((v - lo) / rng * 7))] for v in values)
+    return "".join(_SPARK_CHARS[min(8, int((v - lo) / rng * 8))] for v in values)
 
 
 def _colored_sparkline(values: list[float]) -> str:
@@ -39,7 +39,7 @@ def _colored_sparkline(values: list[float]) -> str:
     result = []
     for v in values:
         frac = (v - lo) / rng  # 0.0 … 1.0
-        char = _SPARK_CHARS[min(7, int(frac * 7))]
+        char = _SPARK_CHARS[min(8, int(frac * 8))]
         if frac >= 0.75:
             result.append(red(char))
         elif frac >= 0.25:
@@ -87,7 +87,7 @@ def _composition_bar(input_tok: int, cache_tok: int, output_tok: int, width: int
         return dim("─" * width)
     i_w = max(0, round(input_tok / total * width))
     c_w = max(0, round(cache_tok / total * width))
-    o_w = width - i_w - c_w
+    o_w = max(0, width - i_w - c_w)
     return dim("█" * i_w) + cyan("█" * c_w) + green("█" * o_w)
 
 
@@ -142,8 +142,8 @@ def _fetch_window(minutes: int, *, quiet: bool = False) -> dict:
     sessions = {(e.source, e.session_id) for e in events}
 
     # Per-minute buckets for sparkline (last N minutes, 1-min resolution)
-    bucket_count = min(minutes, 60)  # cap at 60 buckets for display
-    bucket_width = minutes / bucket_count
+    bucket_count = min(max(minutes, 1), 60)  # cap at 60 buckets; guard against minutes <= 0
+    bucket_width = minutes / bucket_count if bucket_count and minutes > 0 else 1.0
     buckets_cost: list[float] = [0.0] * bucket_count
     buckets_tokens: list[float] = [0.0] * bucket_count
     # Per-bucket source set for heatmap strip

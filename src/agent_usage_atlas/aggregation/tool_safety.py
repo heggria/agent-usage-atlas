@@ -66,7 +66,7 @@ def _detect_bash_for_search_precise(ctx: AggContext) -> tuple[int, int]:
         return 0, 0
 
     # Use the lesser of bash-in-search-sessions and actual search commands
-    return min(total, search_command_total), len(affected) if search_command_total else 0
+    return min(total, search_command_total), len(affected)
 
 
 def _detect_error_cascade(sequences: dict) -> tuple[int, int]:

@@ -122,7 +122,7 @@ def compute(ctx: AggContext) -> dict:
     # ── Per-session scores ──
     all_session_scores: list[dict] = []
     for session in ctx.active_sessions:
-        if session["total"] == 0 and session["cost"] == 0:
+        if session.get("total", 0) == 0 and session.get("cost", 0) == 0:
             continue
         all_session_scores.append(_session_tes(session))
 
@@ -130,16 +130,15 @@ def compute(ctx: AggContext) -> dict:
     all_session_scores.sort(key=lambda s: s["tes"])
     worst_20 = all_session_scores[:20]
 
-    # Overall TES: token-weighted average across sessions
-    total_weight = sum(s["total_tokens"] for s in all_session_scores)
-    if total_weight > 0:
+    # Overall TES: token-weighted average across sessions.
+    # Use max(total_tokens, 1) so sessions with zero recorded tokens (e.g. cost-only
+    # sessions that passed the filter) are not silently excluded from the average;
+    # they each receive a weight of 1 instead of 0.
+    if all_session_scores:
+        weights = [max(s["total_tokens"], 1) for s in all_session_scores]
+        total_weight = sum(weights)
         overall_tes = round(
-            sum(s["tes"] * s["total_tokens"] for s in all_session_scores) / total_weight,
-            1,
-        )
-    elif all_session_scores:
-        overall_tes = round(
-            sum(s["tes"] for s in all_session_scores) / len(all_session_scores),
+            sum(s["tes"] * w for s, w in zip(all_session_scores, weights)) / total_weight,
             1,
         )
     else:

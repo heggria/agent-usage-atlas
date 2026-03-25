@@ -58,6 +58,8 @@ def parse(start_utc, now_utc, *, mtime_floor: datetime | None = None) -> ParseRe
             try:
                 with sqlite3.connect(str(db)) as conn:
                     for r in conn.execute("SELECT id,cwd,git_branch FROM threads").fetchall():
+                        if r[0] is None:
+                            continue
                         sid, cwd, br = str(r[0]), r[1], r[2]
                         metas.append(SessionMeta("Codex", sid, cwd, Path(cwd).name if cwd else None, br))
                         meta_seen.add(sid)
@@ -71,6 +73,8 @@ def parse(start_utc, now_utc, *, mtime_floor: datetime | None = None) -> ParseRe
                 for r in conn.execute(
                     "SELECT id, cwd, git_branch, created_at, updated_at, tokens_used, source FROM threads"
                 ).fetchall():
+                    if r[0] is None:
+                        continue
                     sid = str(r[0])
                     if sid not in meta_seen:
                         cwd, br = r[1], r[2]

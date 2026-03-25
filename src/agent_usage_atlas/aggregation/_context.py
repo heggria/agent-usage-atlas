@@ -249,7 +249,7 @@ def build_context(
         day["cost_reasoning"] += cost_breakdown["reasoning"]
         day["source_totals"][event.source] += total_tokens
         day["cost_sources"][event.source] += cost
-        day["models"][event.model] = day["models"].get(event.model, 0) + event._total
+        day["models"][event.model] = day["models"].get(event.model, 0) + total_tokens
 
         hourly_source_totals[local_ts.hour][event.source] += total_tokens
         hourly_token_details[local_ts.hour]["output"] += event.output
@@ -298,10 +298,8 @@ def build_context(
         session = session_rollups[(tool_call.source, tool_call.session_id)]
         session["source"] = tool_call.source
         session["session_id"] = tool_call.session_id
-        session["first_local"] = session["first_local"] or local_ts
-        session["last_local"] = session["last_local"] or local_ts
-        session["first_local"] = min(session["first_local"], local_ts)
-        session["last_local"] = max(session["last_local"], local_ts)
+        session["first_local"] = min(session["first_local"], local_ts) if session["first_local"] is not None else local_ts
+        session["last_local"] = max(session["last_local"], local_ts) if session["last_local"] is not None else local_ts
         session["tool_calls"] += 1
 
         if tool_call.file_path:
@@ -314,7 +312,7 @@ def build_context(
             if tool_call.exit_code is not None and tool_call.exit_code != 0:
                 command_failures[first_word] += 1
                 day["command_failures"] += 1
-            else:
+            elif tool_call.exit_code == 0:
                 day["command_successes"] += 1
 
     # ── Build ordered_days ──
@@ -362,7 +360,7 @@ def build_context(
 
     # Precompute grand totals for downstream modules
     _grand_total = sum(d["total_tokens"] for d in ordered_days)
-    _grand_cost = sum(d["cost"] for d in ordered_days)
+    _grand_cost = sum(daily_rollups[d["date"]]["cost"] for d in ordered_days)
     _grand_cache_read = sum(d["cache_read"] for d in ordered_days)
     _grand_cache_write = sum(d["cache_write"] for d in ordered_days)
     _peak_day = None

@@ -97,10 +97,12 @@ def _build_windows(hourly_rows: list[dict], n_windows: int, now_local: datetime)
     tools_by_hour: dict[int, int] = {}
 
     for row in hourly_rows:
-        h = row["hour"]
-        cost_by_hour[h] = row.get("cost", 0.0)
+        h = row.get("hour")
+        if h is None:
+            continue
+        cost_by_hour[h] = row.get("cost") or 0.0
         # tokens = output + reasoning (raw tokens visible here)
-        tokens_by_hour[h] = row.get("output", 0) + row.get("reasoning", 0)
+        tokens_by_hour[h] = (row.get("output") or 0) + (row.get("reasoning") or 0)
         # tool density not available in hourly_source_totals — leave 0
         tools_by_hour[h] = 0
 
@@ -162,7 +164,7 @@ def run(args) -> None:
     hourly_rows: list[dict] = working_patterns.get("hourly_source_totals", [])
     days: list[dict] = dashboard.get("days", [])
 
-    grand_tokens: int = totals.get("grand_total", 0)
+    grand_tokens: int = totals.get("grand_total") or 0
 
     windows = _build_windows(hourly_rows, n_windows, now_local)
     max_cost = max((w.cost for w in windows), default=0.0)
@@ -218,11 +220,14 @@ def run(args) -> None:
         day_header = f"  {'Date':<14}{'Cost':>10}  {'Tokens':>16}  {'Tool calls':>12}"
         print(dim(day_header))
         for d in active_days:
+            d_date = d.get("date")
+            if not d_date:
+                continue
             d_cost = d.get("cost", 0.0)
             d_tokens = d.get("total_tokens", 0)
             d_tools = d.get("tool_calls", 0)
             print(
-                f"  {cyan(d['date']):<14}"
+                f"  {cyan(d_date):<14}"
                 f"{_color_cost(d_cost, fmt_usd(d_cost)):>10}"
                 f"  {dim(fmt_int(d_tokens)):>16}"
                 f"  {dim(fmt_int(d_tools)):>12}"

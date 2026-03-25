@@ -118,9 +118,9 @@ def _handle_daily_stats(args: dict) -> str:
     daily = payload.get("days", [])
     lines = [f"Daily stats for the last {days} days:", ""]
     for d in daily[-days:]:
-        tokens = f"{d['total_tokens']:,}"
-        cost = f"${d['cost']:.4f}"
-        lines.append(f"  {d['date']}: {tokens} tokens, {cost}")
+        tokens = f"{d.get('total_tokens', 0):,}"
+        cost = f"${d.get('cost', 0):.4f}"
+        lines.append(f"  {d.get('date', '?')}: {tokens} tokens, {cost}")
     totals = payload.get("totals", {})
     lines.append("")
     lines.append(f"Grand total: {totals.get('grand_total', 0):,} tokens, ${totals.get('grand_cost', 0):.2f}")
@@ -135,8 +135,8 @@ def _handle_cost_summary(args: dict) -> str:
     # By source
     lines.append("By Source:")
     for card in payload.get("source_cards", []):
-        cost = f"${card['cost']:.2f}" if card.get("token_capable") else "-"
-        lines.append(f"  {card['source']}: {cost} ({card.get('sessions', 0)} sessions)")
+        cost = f"${card.get('cost', 0):.2f}" if card.get("token_capable") else "-"
+        lines.append(f"  {card.get('source', '?')}: {cost} ({card.get('sessions', 0)} sessions)")
 
     # By model (top 10) — model_costs lives under trend_analysis, not totals
     totals = payload.get("totals", {})
@@ -145,7 +145,7 @@ def _handle_cost_summary(args: dict) -> str:
         lines.append("")
         lines.append("By Model (top 10):")
         for mc in model_costs[:10]:
-            lines.append(f"  {mc['model']}: ${mc['cost']:.4f}")
+            lines.append(f"  {mc.get('model', '?')}: ${mc.get('cost', 0):.4f}")
 
     lines.append("")
     lines.append(f"Grand total: ${totals.get('grand_cost', 0):.2f}")
@@ -159,9 +159,9 @@ def _handle_session_stats(args: dict) -> str:
     sessions = payload.get("top_sessions", [])[:top_n]
     lines = [f"Top {top_n} sessions by cost (last {days} days):", ""]
     for i, s in enumerate(sessions, 1):
-        sid = s.get("session_id", "?")[:12]
+        sid = (s.get("session_id") or "?")[:12]
         lines.append(
-            f"  {i}. [{s['source']}] {sid}  "
+            f"  {i}. [{s.get('source', '?')}] {sid}  "
             f"tokens={s.get('total', 0):,}  cost=${s.get('cost', 0):.4f}  "
             f"tools={s.get('tool_calls', 0)}  model={s.get('top_model', '?')}"
         )
@@ -175,7 +175,7 @@ def _handle_model_usage(args: dict) -> str:
     model_costs = payload.get("trend_analysis", {}).get("model_costs", [])
     lines = [f"Model usage for the last {days} days:", ""]
     for mc in model_costs:
-        lines.append(f"  {mc['model']}: ${mc['cost']:.4f}  ({mc.get('messages', 0)} messages)")
+        lines.append(f"  {mc.get('model', '?')}: ${mc.get('cost', 0):.4f}  ({mc.get('messages', 0)} messages)")
     lines.append("")
     lines.append(f"Grand total: ${totals.get('grand_cost', 0):.2f}")
     return "\n".join(lines)
@@ -217,7 +217,7 @@ def run(args) -> None:
 
         method = req.get("method", "")
         req_id = req.get("id")
-        params = req.get("params", {})
+        params = req.get("params") or {}
 
         # Notifications (no id) — just acknowledge
         if req_id is None:

@@ -121,9 +121,9 @@ def run(args) -> None:
     def _cache_pct(s: dict) -> str:
         total = s.get("total", 0)
         if not total:
-            return " --%"
-        cr = s.get("cache_read", 0)
-        cw = s.get("cache_write", 0)
+            return "  --%"
+        cr = s.get("cache_read") or 0
+        cw = s.get("cache_write") or 0
         pct = (cr + cw) / total * 100
         return f"{pct:4.0f}%"
 

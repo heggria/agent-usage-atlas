@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -67,7 +68,11 @@ def _load_pricing_json(path: Path) -> dict[str, PricingTier]:
     for key, value in raw.items():
         if key.startswith("_"):
             continue  # skip metadata keys like _comment
-        if isinstance(value, list) and len(value) == 5:
+        if (
+            isinstance(value, list)
+            and len(value) == 5
+            and all(isinstance(x, (int, float)) for x in value)
+        ):
             result[key] = PricingTier(*value)
     return result
 
@@ -269,7 +274,9 @@ def fmt_int(v: int) -> str:
 def fmt_usd(v: float) -> str:
     if v == 0:
         return "$0.00"
-    return f"${v:,.0f}" if v >= 1000 else f"${v:.2f}" if v >= 1 else f"${v:.4f}"
+    sign = "-" if v < 0 else ""
+    av = abs(v)
+    return f"{sign}${av:,.0f}" if av >= 1000 else f"{sign}${av:.2f}" if av >= 1 else f"{sign}${av:.4f}"
 
 
 def fmt_short(v: float | int) -> str:
@@ -293,6 +300,8 @@ def fmt_pct(v: float) -> str:
 
 def fmt_duration(minutes: float) -> str:
     """Format minutes into a human-readable duration."""
+    if not math.isfinite(minutes):
+        return "N/A"
     if minutes < 1:
         return f"{minutes * 60:.0f}s"
     if minutes < 60:

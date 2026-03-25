@@ -55,12 +55,17 @@ def _read_config_model(home: Path) -> str:
                 data = tomllib.load(f)
         except ImportError:
             return "claude-sonnet-4-6"
+        except Exception as exc:
+            warnings.warn(f"Hermit config.toml read failed: {exc}", stacklevel=2)
+            return "claude-sonnet-4-6"
     except Exception as exc:
         warnings.warn(f"Hermit config.toml read failed: {exc}", stacklevel=2)
         return "claude-sonnet-4-6"
 
     default_profile = data.get("default_profile", "")
     profiles = data.get("profiles", {})
+    if not isinstance(profiles, dict):
+        return data.get("model", "claude-sonnet-4-6")
     if default_profile and default_profile in profiles:
         return profiles[default_profile].get("model", "claude-sonnet-4-6")
     # Try first profile

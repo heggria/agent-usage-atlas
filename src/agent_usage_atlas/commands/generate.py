@@ -25,10 +25,10 @@ def run(args) -> None:
         raise SystemExit(f"Invalid --since date format: {exc}") from exc
     output_path = args.output or (Path.cwd() / "reports" / "dashboard.html")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(render(dashboard, fmt="html"))
+    output_path.write_text(render(dashboard, fmt="html"), encoding="utf-8")
 
     print(f"Dashboard -> {output_path}")
     print_summary(dashboard)
 
     if args.open_browser:
-        webbrowser.open(output_path.as_uri())
+        webbrowser.open(output_path.resolve().as_uri())

@@ -212,9 +212,9 @@ def _print_verbose(dashboard: dict, totals: dict) -> None:
     summary = efficiency.get("summary", {})
     if summary:
         print(_section("Efficiency"))
-        avg_reason = summary.get("avg_reasoning_ratio", 0)
-        avg_cache = summary.get("avg_cache_hit_rate", 0)
-        avg_tpm = summary.get("avg_tokens_per_message", 0)
+        avg_reason = summary.get("avg_reasoning_ratio") or 0
+        avg_cache = summary.get("avg_cache_hit_rate") or 0
+        avg_tpm = summary.get("avg_tokens_per_message") or 0
         print(f"    Avg reasoning ratio   {avg_reason:.1f}%")
         print(f"    Avg cache hit rate    {avg_cache:.1f}%")
         print(f"    Avg tokens/message    {fmt_int(int(avg_tpm))}")
@@ -222,9 +222,9 @@ def _print_verbose(dashboard: dict, totals: dict) -> None:
     # ── Working patterns peak hour ─────────────────────────────────
     hourly = working.get("hourly_source_totals", [])
     if hourly:
-        peak_hour = max(hourly, key=lambda h: sum(v for k, v in h.items() if k != "hour"))
+        peak_hour = max(hourly, key=lambda h: sum(v for k, v in h.items() if k not in {"hour", "cost"} and v is not None))
         hour_label = f"{peak_hour['hour']:02d}:00"
-        total_at_peak = sum(v for k, v in peak_hour.items() if k != "hour")
+        total_at_peak = sum(v for k, v in peak_hour.items() if k not in {"hour", "cost"} and v is not None)
         print(_section("Working Patterns"))
         print(f"    Peak hour  {bold(hour_label)}  {dim(fmt_int(total_at_peak) + ' tokens')}")
 

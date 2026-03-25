@@ -92,7 +92,7 @@ def _parse_single_file(
                 meta_seen.add(sid)
                 cwd = obj.get("cwd")
                 br = obj.get("gitBranch")
-                proj = Path(cwd).name if cwd and "/" in str(cwd) else str(cwd).rsplit("-", 1)[-1] if cwd else None
+                proj = (Path(cwd).name or None) if cwd and "/" in str(cwd) else str(cwd).rsplit("-", 1)[-1] if cwd else None
                 metas.append(SessionMeta("Claude", sid, cwd, proj, br))
             ts = _ts(obj.get("timestamp"))
             if ts:
@@ -113,9 +113,9 @@ def _parse_single_file(
         if obj_type == "system" and obj.get("subtype") == "turn_duration":
             dur = obj.get("durationMs")
             ts = _ts(obj.get("timestamp"))
-            if dur and ts:
+            if dur is not None and ts:
                 sid = str(obj.get("sessionId") or path.stem)
-                turn_durations.append(TurnDuration("Claude", ts, sid, int(dur)))
+                turn_durations.append(TurnDuration("Claude", ts, sid, _si(dur)))
 
         for pl in _claude_msgs(obj):
             msg, u = pl["message"], pl["message"].get("usage", {})

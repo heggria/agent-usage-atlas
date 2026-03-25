@@ -64,7 +64,7 @@ def _print_ranking(ranking: list[dict], top: int) -> None:
     max_cost = max((r["cost"] for r in rows), default=0.0)
 
     # Compute column widths from data
-    max_proj = max(len(r["project"]) for r in rows)
+    max_proj = max((len(r["project"]) for r in rows), default=0)
     col_proj = max(max_proj, 7)  # "Project" header length
 
     bar_hdr = f"{'Cost Bar':<{_BAR_WIDTH}}"
@@ -110,7 +110,7 @@ def _print_branches(branch_activity: list[dict]) -> None:
         print(f"  {dim('(no branch data)')}")
         return
 
-    max_branch = max(len(b["branch"]) for b in branch_activity)
+    max_branch = max((len(b["branch"]) for b in branch_activity), default=0)
     col_branch = max(max_branch, 6)
     max_sessions = max((b["sessions"] for b in branch_activity), default=0)
 
@@ -134,10 +134,10 @@ def _print_file_types(file_types: list[dict]) -> None:
         print(f"  {dim('(no file type data)')}")
         return
 
-    max_ext = max(len(f["extension"]) for f in file_types)
+    max_ext = max((len(f["extension"]) for f in file_types), default=0)
     col_ext = max(max_ext, 4)
     total_count = sum(f["count"] for f in file_types) or 1
-    max_count = max(f["count"] for f in file_types)
+    max_count = max((f["count"] for f in file_types), default=0)
 
     hdr_inner = f"{'Ext':<{col_ext}}  {'Count':>8}  {'Pct':>6}  {'Distribution':<{_BAR_WIDTH}}"
     hdr = f"  {bold(hdr_inner)}"

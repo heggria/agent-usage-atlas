@@ -122,12 +122,12 @@ def run(args) -> None:
     lines.append(f"  Active days:        {active_count} / {total_days}")
 
     # Cost trend: first half vs second half
-    if active_days:
+    if len(active_days) >= 2:
         mid = len(active_days) // 2
-        first_half = active_days[:mid] if mid > 0 else active_days
-        second_half = active_days[mid:] if mid > 0 else []
-        first_avg = sum(d.get("cost", 0) for d in first_half) / max(1, len(first_half))
-        second_avg = sum(d.get("cost", 0) for d in second_half) / max(1, len(second_half)) if second_half else 0.0
+        first_half = active_days[:mid]
+        second_half = active_days[mid:]
+        first_avg = sum(d.get("cost", 0) for d in first_half) / len(first_half)
+        second_avg = sum(d.get("cost", 0) for d in second_half) / len(second_half)
         lines.append(f"  Cost trend:         {_trend_label(first_avg, second_avg)}")
 
     # ── 1. Daily sparkline ─────────────────────────────────────────

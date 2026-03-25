@@ -53,7 +53,7 @@ _MIN_VAGUE_LEN = 5
 
 
 def _is_vague(text: str, char_count: int) -> bool:
-    if char_count <= _MIN_VAGUE_LEN:
+    if char_count < _MIN_VAGUE_LEN:
         return True
     if char_count <= _MAX_VAGUE_LEN and text.strip().lower().rstrip(".!?,") in VAGUE_SET:
         return True
@@ -139,7 +139,7 @@ def compute(ctx) -> dict:
     expensive = sorted(prompt_costs, key=lambda p: p["cost"], reverse=True)[:50]
     expensive_out = [
         {
-            "text": p["text"][:150] + "\u2026" if len(p["text"]) > 150 else p["text"],
+            "text": (p["text"][:150] + "\u2026" if len(p["text"]) > 150 else p["text"]),
             "tokens": p["tokens"],
             "cost": round(p["cost"], 6),
             "model": p["model"],

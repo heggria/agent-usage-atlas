@@ -33,6 +33,7 @@ _BAR_WIDTH = 20
 
 def _cost_bar(fraction: float) -> str:
     """Return a █-based proportion bar (max _BAR_WIDTH chars) + percentage."""
+    fraction = max(0.0, min(1.0, fraction))
     filled = round(fraction * _BAR_WIDTH)
     bar = "█" * filled + "░" * (_BAR_WIDTH - filled)
     pct = fraction * 100
@@ -90,6 +91,9 @@ def run(args) -> None:
 
     # ── Table ─────────────────────────────────────────────────────
     rows = model_costs[:top_n]
+    if not rows:
+        print("  No model usage data to display (--top must be >= 1).")
+        return
 
     # Column headers
     hdr_rank = "#"

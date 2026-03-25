@@ -3,6 +3,19 @@
 from __future__ import annotations
 
 
+def _positive_interval(value: str) -> int:
+    """Validate --interval is an integer >= 1."""
+    try:
+        v = int(value)
+    except ValueError:
+        import argparse
+        raise argparse.ArgumentTypeError(f"must be a valid integer, got '{value}'")
+    if v < 1:
+        import argparse
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {v}")
+    return v
+
+
 def add_parser(subparsers):
     parser = subparsers.add_parser(
         "serve",
@@ -10,7 +23,7 @@ def add_parser(subparsers):
     )
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Server host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8765, help="Server port (default: 8765)")
-    parser.add_argument("--interval", type=int, default=5, help="Refresh interval in seconds (default: 5)")
+    parser.add_argument("--interval", type=_positive_interval, default=5, help="Refresh interval in seconds (default: 5)")
     parser.set_defaults(func=run)
     return parser
 

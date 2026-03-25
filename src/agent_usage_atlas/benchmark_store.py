@@ -135,7 +135,7 @@ def _dict_to_record(raw: dict[str, Any]) -> BenchmarkRecord:
 
     Handles the nested ``MachineInfo`` dataclass manually.
     """
-    machine_data = raw.pop("machine", {})
+    machine_data = raw.get("machine", {})
     machine = MachineInfo(
         node=machine_data.get("node", ""),
         platform=machine_data.get("platform", ""),
@@ -320,6 +320,8 @@ def format_history_table(records: list[BenchmarkRecord], max_rows: int = 10) -> 
         return "  (no benchmark history)"
 
     display = records[:max_rows]
+    if not display:
+        return "  (no benchmark history)"
 
     # Column headers.
     hdr_date = "Date"
@@ -363,24 +365,21 @@ def format_history_table(records: list[BenchmarkRecord], max_rows: int = 10) -> 
 
         rows.append((date_str, median_str, ci_str, change_str, ver_str))
 
-    # Compute column widths.
-    col_w = [
-        max(len(hdr_date), *(len(r[0]) for r in rows)),
-        max(len(hdr_median), *(len(r[1]) for r in rows)),
-        max(len(hdr_ci), *(len(r[2]) for r in rows)),
-        max(len(hdr_change) + 4, *(len(r[3]) for r in rows)),  # extra for ANSI
-        max(len(hdr_version), *(len(r[4]) for r in rows)),
-    ]
-
-    # For change column, strip ANSI for width calculation.
+    # Strip ANSI escape sequences for accurate width calculation.
     def _visible_len(s: str) -> int:
         """Length of string without ANSI escape sequences."""
         import re
 
         return len(re.sub(r"\033\[[0-9;]*m", "", s))
 
-    # Recalculate change column width using visible lengths.
-    col_w[3] = max(len(hdr_change), *(_visible_len(r[3]) for r in rows))
+    # Compute column widths using visible length for ANSI-decorated columns.
+    col_w = [
+        max(len(hdr_date), *(len(r[0]) for r in rows)),
+        max(len(hdr_median), *(len(r[1]) for r in rows)),
+        max(len(hdr_ci), *(len(r[2]) for r in rows)),
+        max(len(hdr_change), *(_visible_len(r[3]) for r in rows)),
+        max(len(hdr_version), *(len(r[4]) for r in rows)),
+    ]
 
     sep = "  "
 

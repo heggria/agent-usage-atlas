@@ -292,6 +292,9 @@ def _print_warm_stats_basic(
     """Print warm pipeline stats using stdlib statistics only."""
     import statistics
 
+    if not warm_totals:
+        return
+
     median_total = statistics.median(warm_totals)
     min_total = min(warm_totals)
     max_total = max(warm_totals)
@@ -485,7 +488,7 @@ def run(args: Any) -> None:  # noqa: C901
         try:
             machine_info = _MachineInfo.capture()  # type: ignore[union-attr]
             machine_fp = machine_info.fingerprint()
-            # Short label: last 6 chars of fingerprint
+            # Short label: first 6 chars of fingerprint
             machine_label = machine_fp[:6] if machine_fp else "unknown"
         except Exception:
             pass
@@ -544,7 +547,7 @@ def run(args: Any) -> None:  # noqa: C901
         except Exception:
             baseline_record = None
 
-        if baseline_record is not None and baseline_record.warm_samples:
+        if baseline_record is not None and baseline_record.warm_samples and warm_totals:
             try:
                 regression = _compare_runs(  # type: ignore[misc]
                     baseline=baseline_record.warm_samples,

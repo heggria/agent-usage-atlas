@@ -130,7 +130,7 @@ def run(args) -> None:
     suggestion_key = "suggestion_zh" if args.lang == "zh" else "suggestion_en"
 
     # Compute max impact score for relative bar scaling
-    max_score: int | float = max((ins.get("impact_score", 0) for ins in raw_insights), default=1) or 1
+    max_score: int | float = max((ins.get("impact_score") or 0 for ins in raw_insights), default=1) or 1
 
     # Group and display by severity (critical first)
     for severity in _SEVERITY_LEVELS:
@@ -152,10 +152,10 @@ def run(args) -> None:
         for ins in group:
             icon_fn = _SEVERITY_DISPLAY.get(severity, _SEVERITY_DISPLAY["info"])
             icon = icon_fn()
-            rule_name = _format_rule_name(ins.get("rule", "unknown"))
-            score = ins.get("impact_score", 0)
+            rule_name = _format_rule_name(ins.get("rule") or "unknown")
+            score = ins.get("impact_score") or 0
             bar = _impact_bar(score, max_score)
-            suggestion = ins.get(suggestion_key, ins.get("suggestion_en", ""))
+            suggestion = ins.get(suggestion_key) or ins.get("suggestion_en") or ""
             data: dict = ins.get("data") or {}
 
             # First line: icon, rule name, score bar, score value

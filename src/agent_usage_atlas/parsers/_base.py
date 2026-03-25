@@ -66,11 +66,17 @@ def _read_json_lines(path: Path) -> list[dict]:
 
     # Fast signature changed — check content hash before invalidating
     if cached is not None:
-        chash = _content_hash(path)
-        if chash == cached[1]:
+        try:
+            chash = _content_hash(path)
+        except OSError:
+            chash = ""
+        if chash and chash == cached[1]:
             with _FILE_CACHE_LOCK:
-                _JSONL_CACHE[key] = (signature, chash, cached[2])
-                _JSONL_CACHE.move_to_end(key)
+                # Only write back if no other thread has already updated this entry.
+                current = _JSONL_CACHE.get(key)
+                if current is not None and current[0] == cached[0]:
+                    _JSONL_CACHE[key] = (signature, chash, cached[2])
+                    _JSONL_CACHE.move_to_end(key)
             return cached[2]
 
     rows: list[dict] = []
@@ -91,7 +97,13 @@ def _read_json_lines(path: Path) -> list[dict]:
     # Content hash: only compute when a previous cache entry exists (enables
     # "mtime changed but content unchanged" fast-path on future checks).
     # On cold start (cached is None) skip the extra file read entirely.
-    chash = _content_hash(path) if cached is not None and (rows or skipped) else ""
+    if cached is not None and (rows or skipped):
+        try:
+            chash = _content_hash(path)
+        except OSError:
+            chash = ""
+    else:
+        chash = ""
 
     with _FILE_CACHE_LOCK:
         _JSONL_CACHE[key] = (signature, chash, rows)
@@ -195,7 +207,10 @@ def _ts(raw: object) -> datetime | None:
             return parsedate_to_datetime(s)
         except (TypeError, ValueError):
             pass
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
 def _si(v: object) -> int:

@@ -101,7 +101,7 @@ def run(args) -> None:
         return
 
     # Determine column widths
-    name_width = max(len(t["name"]) for t in display_ranking)
+    name_width = max(len(t["name"] or "") for t in display_ranking)
     name_width = max(name_width, len("Tool Name"))
     rank_width = len(str(top_n))
     rank_width = max(rank_width, 1)
@@ -122,7 +122,7 @@ def run(args) -> None:
     print(dim("-" * len(header_line)))
 
     for i, tool in enumerate(display_ranking, 1):
-        name = tool["name"]
+        name = tool["name"] or ""
         count = tool["count"]
         pct = (count / total_tool_calls * 100) if total_tool_calls else 0.0
         bar = _bar(count, max_count)
@@ -142,7 +142,7 @@ def run(args) -> None:
         distinct = len(ranking)
         diversity = distinct / total_tool_calls
         top3_pct = sum(t["count"] for t in ranking[:3]) / total_tool_calls * 100
-        top3_names = ", ".join(t["name"] for t in ranking[:3])
+        top3_names = ", ".join(t["name"] or "" for t in ranking[:3])
         print(
             f"Diversity score:  {bold(f'{diversity:.4f}')}"
             f"  ({fmt_int(distinct)} distinct tools / {fmt_int(total_tool_calls)} calls)"
@@ -166,8 +166,8 @@ def _print_bigrams(bigrams: list[dict], top_n: int) -> None:
         print(dim("No bigram data available."))
         return
 
-    from_width = max(len(b["from"]) for b in display)
-    to_width = max(len(b["to"]) for b in display)
+    from_width = max(len(b["from"] or "") for b in display)
+    to_width = max(len(b["to"] or "") for b in display)
     max_count = display[0]["count"] if display else 1
 
     # Arrow shaft width: 3–12 chars, proportional to count
@@ -178,8 +178,8 @@ def _print_bigrams(bigrams: list[dict], top_n: int) -> None:
     print()
 
     for bigram in display:
-        src = bigram["from"]
-        tgt = bigram["to"]
+        src = bigram["from"] or ""
+        tgt = bigram["to"] or ""
         count = bigram["count"]
         shaft_len = max(3, round(_ARROW_MAX * count / max_count))
         shaft = "═" * shaft_len
@@ -195,7 +195,7 @@ def _print_commands(top_commands: list[dict], summary: dict, top_n: int) -> None
         print(dim("No command data available."))
         return
 
-    cmd_width = max(len(c["command"]) for c in display)
+    cmd_width = max(len(c["command"] or "") for c in display)
     cmd_width = max(cmd_width, len("Command"))
     rank_width = len(str(len(display)))
     rank_width = max(rank_width, 1)

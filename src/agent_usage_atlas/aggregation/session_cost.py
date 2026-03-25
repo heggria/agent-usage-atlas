@@ -30,12 +30,12 @@ def compute(ctx: AggContext) -> dict:
         key = (event.source, event.session_id)
         bd = event.cost_breakdown
         bucket = session_costs[key]
-        bucket["input"] += bd["input"]
-        bucket["cache_read"] += bd["cache_read"]
-        bucket["cache_write"] += bd["cache_write"]
-        bucket["output"] += bd["output"]
-        bucket["reasoning"] += bd["reasoning"]
-        bucket["cache_read_full"] += bd["cache_read_full"]
+        bucket["input"] += bd.get("input", 0.0)
+        bucket["cache_read"] += bd.get("cache_read", 0.0)
+        bucket["cache_write"] += bd.get("cache_write", 0.0)
+        bucket["output"] += bd.get("output", 0.0)
+        bucket["reasoning"] += bd.get("reasoning", 0.0)
+        bucket["cache_read_full"] += bd.get("cache_read_full", 0.0)
 
     # ── Build per-session records ──
     records: list[dict] = []
@@ -56,7 +56,7 @@ def compute(ctx: AggContext) -> dict:
             {"label": "Output", "value": _round_money(costs["output"]), "type": "cost"},
             {"label": "Reasoning", "value": _round_money(costs["reasoning"]), "type": "cost"},
             {"label": "Cache Read", "value": _round_money(costs["cache_read"]), "type": "cost"},
-            {"label": "Cache Savings", "value": _round_money(-cache_savings), "type": "savings"},
+            {"label": "Cache Savings", "value": _round_money(-cache_savings) if cache_savings else 0.0, "type": "savings"},
         ]
 
         reasoning_share = _percent(costs["reasoning"], total_cost)
@@ -72,6 +72,7 @@ def compute(ctx: AggContext) -> dict:
                 "session_id": session_id,
                 "source": source,
                 "total_cost": _round_money(total_cost),
+                "_raw_total": total_cost,
                 "waterfall": waterfall,
                 "ratios": {
                     "reasoning_share": round(reasoning_share, 4),
@@ -82,8 +83,10 @@ def compute(ctx: AggContext) -> dict:
         )
 
     # ── Sort by total_cost descending, keep top 20 ──
-    records.sort(key=lambda r: r["total_cost"], reverse=True)
+    records.sort(key=lambda r: r["_raw_total"], reverse=True)
     top_sessions = records[:20]
+    for s in top_sessions:
+        s.pop("_raw_total", None)
 
     # ── Aggregate statistics ──
     n = len(reasoning_shares)

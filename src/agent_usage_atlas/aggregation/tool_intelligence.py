@@ -35,11 +35,11 @@ def _compute_diversity(ctx: AggContext) -> dict:
             if p > 0:
                 h -= p * math.log2(p)
 
-        # Pielou's J evenness = H / log2(n) when n > 1, else 1.0
+        # Pielou's J evenness = H / log2(n) when n > 1, else 0.0 (single tool = maximally focused)
         if n_distinct > 1:
             j = h / math.log2(n_distinct)
         else:
-            j = 1.0 if n_distinct == 1 else 0.0
+            j = 0.0  # n_distinct <= 1: H == 0, so J == 0 (focused, not exploratory)
 
         classification = _classify_evenness(j)
 
@@ -111,6 +111,8 @@ def _compute_markov(ctx: AggContext) -> dict:
     trigram_counts: Counter = Counter()
 
     for sequence in ctx.tool_sequences.values():
+        if not sequence:
+            continue
         for i in range(len(sequence) - 1):
             src_tool = sequence[i]
             dst_tool = sequence[i + 1]

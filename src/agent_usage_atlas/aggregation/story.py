@@ -84,7 +84,7 @@ def compute(ctx: AggContext) -> dict:
     tempo_notes = []
     tempo_notes_en = []
     hottest_hour = max(hourly_rows, key=lambda r: sum(r.get(s, 0) for s in SOURCE_ORDER), default=None)
-    if hottest_hour:
+    if hottest_hour and sum(hottest_hour.get(s, 0) for s in SOURCE_ORDER) > 0:
         tempo_notes.append(f"最热小时是 {hottest_hour['hour']:02d}:00。")
         tempo_notes_en.append(f"Hottest hour is {hottest_hour['hour']:02d}:00.")
     if cost_peak_day:

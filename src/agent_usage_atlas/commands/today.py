@@ -81,20 +81,20 @@ def _build_frame(*, quiet: bool = False, footer: str = "") -> list[str]:
     if active_sources:
         lines.append("")
         for card in sorted(active_sources, key=lambda c: c.get("cost", 0), reverse=True):
-            src = card["source"]
+            src = card.get("source", "unknown")
             if card.get("token_capable"):
-                tok = fmt_int(card["total"])
-                cst = fmt_usd(card["cost"])
+                tok = fmt_int(card.get("total", 0))
+                cst = fmt_usd(card.get("cost", 0.0))
             else:
-                tok = f"{fmt_int(card['messages'])} msgs"
+                tok = f"{fmt_int(card.get('messages', 0))} msgs"
                 cst = "-"
-            lines.append(f"  {src:<12s} {tok:>14s}  {cst:>10s}  {card['sessions']:>3} sessions")
+            lines.append(f"  {src:<12s} {tok:>14s}  {cst:>10s}  {card.get('sessions', 0):>3} sessions")
 
     # Top 3 models
     if model_costs:
         lines.append("")
         for mc in model_costs[:3]:
-            lines.append(f"  {mc['model']:<28s} {fmt_usd(mc['cost']):>10s}")
+            lines.append(f"  {mc.get('model', 'unknown'):<28s} {fmt_usd(mc.get('cost', 0.0)):>10s}")
 
     # Hourly breakdown
     sources_in_hourly = ("Claude", "Codex", "Hermit", "Cursor")

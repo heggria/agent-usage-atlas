@@ -10,7 +10,7 @@ from ._context import AggContext, _percent, _percentile
 
 
 def compute(ctx: AggContext, claude_stats=None) -> dict:
-    claude_stats = claude_stats or ctx.claude_stats_cache
+    claude_stats = ctx.claude_stats_cache if claude_stats is None else claude_stats
     return {
         "turn_durations": _turn_durations(ctx),
         "task_events": _task_stats(ctx),

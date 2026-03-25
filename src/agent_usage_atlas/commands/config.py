@@ -160,6 +160,10 @@ def _show_pricing() -> None:
     # Sort by input price descending, take top 20
     sorted_models = sorted(pricing.items(), key=lambda kv: kv[1].input, reverse=True)[:20]
 
+    if not sorted_models:
+        print(f"  No pricing data available.")
+        return
+
     # ── Group models by identical pricing tier ──────────────────────────
     # Build tier -> [model names] mapping, preserving sort order
     tier_groups: dict[tuple, list[str]] = {}
@@ -380,9 +384,14 @@ def _show_health() -> None:
         print(f"    {dim('✗')} Disk cache directory does not exist yet")
     else:
         now = time.time()
-        cache_files = list(disk_cache_dir.iterdir())
+        try:
+            cache_files = list(disk_cache_dir.iterdir())
+        except OSError:
+            print(f"    {yellow('⚠')} Cache directory exists but could not be read")
+            issues.append("Cache directory is unreadable")
+            cache_files = None
         stale_files: list[Path] = []
-        for cf in cache_files:
+        for cf in (cache_files or []):
             try:
                 age = now - cf.stat().st_mtime
                 if age > _CACHE_STALE_SECONDS:
@@ -390,11 +399,12 @@ def _show_health() -> None:
             except OSError:
                 pass
 
-        if stale_files:
+        if cache_files is None:
+            pass  # directory was unreadable; warning already printed above
+        elif stale_files:
             sym = yellow("⚠")
             print(f"    {sym} {len(stale_files)} cache file(s) older than 1 hour")
             issues.append(f"{len(stale_files)} stale cache file(s) in {disk_cache_dir}")
-            ok_count += 1
         else:
             sym = green("✓")
             total = len(cache_files)

@@ -241,7 +241,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Suppress ConnectionResetError from browser closing SSE / refreshing."""
         try:
             super().handle()
-        except (ConnectionResetError, BrokenPipeError):
+        except (ConnectionResetError, BrokenPipeError, TimeoutError):
             pass
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
@@ -390,11 +390,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Too many SSE connections")
             return
 
-        with _SSE_ACTIVE_LOCK:
-            global _SSE_ACTIVE
-            _SSE_ACTIVE += 1
-
         try:
+            with _SSE_ACTIVE_LOCK:
+                global _SSE_ACTIVE
+                _SSE_ACTIVE += 1
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
@@ -424,7 +423,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         self.wfile.flush()
                         last_write = now
                     time.sleep(interval)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, TimeoutError):
                 return
         finally:
             with _SSE_ACTIVE_LOCK:

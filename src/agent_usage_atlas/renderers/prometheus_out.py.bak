@@ -38,7 +38,7 @@ def render(payload: dict[str, Any]) -> str:
         lines.append(_metric("atlas_sessions_total", card.get("sessions", 0), labels))
 
     # Aggregate metrics from totals
-    totals = payload.get("totals") or {}
+    totals = payload.get("totals", {})
 
     if "cost" in totals:
         lines.append("# HELP atlas_cost_daily_usd Daily cost in USD")
@@ -51,7 +51,7 @@ def render(payload: dict[str, Any]) -> str:
         lines.append(_metric("atlas_burn_rate_daily_usd", totals["burn_rate"]))
 
     # Efficiency metrics
-    efficiency = payload.get("efficiency_metrics") or {}
+    efficiency = payload.get("efficiency_metrics", {})
 
     if "cache_ratio" in efficiency:
         lines.append("# HELP atlas_cache_ratio Cache hit ratio")

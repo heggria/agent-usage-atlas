@@ -50,6 +50,27 @@ def compute(ctx: AggContext, budget: float = 100.0) -> dict:
         }
 
     # -- Monte Carlo bootstrap (N=1000) --
+    # When no days remain in the month the simulation loop would never execute
+    # (range(1, 1) is empty), leaving exceed_count=0 and exceed_probability=0.0
+    # even when the budget is already exhausted.  Return a deterministic result.
+    if days_remaining == 0:
+        already_exceeded = spent_this_month > budget
+        return {
+            "budget": _round_money(budget),
+            "spent_this_month": _round_money(spent_this_month),
+            "remaining": _round_money(remaining),
+            "days_elapsed": days_elapsed,
+            "days_remaining": days_remaining,
+            "percent_used": round(percent_used, 2),
+            "scenarios": scenarios,
+            "bootstrap": {
+                "exceed_probability": 1.0 if already_exceeded else 0.0,
+                "p50_exhaust_day": None,
+                "p95_exhaust_day": None,
+            },
+            "safe_daily_budget": 0.0,
+        }
+
     n_simulations = 1000
     exceed_count = 0
     exhaust_days: list[float] = []

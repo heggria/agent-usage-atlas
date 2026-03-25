@@ -43,7 +43,8 @@ def parse(start_utc, now_utc, local_tz=None) -> ParseResult:
                 st = path.stat()
                 # Use birthtime (creation) as session start on macOS;
                 # fall back to mtime on Linux where birthtime is unavailable.
-                btime_ts = getattr(st, "st_birthtime", None) or st.st_mtime
+                btime_ts_raw = getattr(st, "st_birthtime", None)
+                btime_ts = btime_ts_raw if btime_ts_raw is not None else st.st_mtime
                 session_start = datetime.fromtimestamp(btime_ts, tz=timezone.utc)
                 session_end = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
             except Exception as exc:
@@ -90,7 +91,7 @@ def _parse_codegen(start_utc, now_utc):
             try:
                 ts_ms = int(r[0])
                 ts = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-            except (ValueError, TypeError, OSError):
+            except (ValueError, TypeError, OSError, OverflowError):
                 continue
             if ts < start_utc or ts > now_utc:
                 continue
@@ -112,7 +113,7 @@ def _parse_codegen(start_utc, now_utc):
                     commit_date = _ts(r[1])
                 except Exception as exc:
                     warnings.warn(f"Cursor commit date parse failed: {exc}", stacklevel=2)
-            if commit_date and (commit_date < start_utc or commit_date > now_utc):
+            if commit_date is None or commit_date < start_utc or commit_date > now_utc:
                 continue
             scored.append(
                 ScoredCommit(

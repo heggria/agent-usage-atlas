@@ -123,7 +123,7 @@ def build_dashboard_payload(
 
 
 def print_summary(dashboard: dict[str, Any]) -> None:
-    if not dashboard or "totals" not in dashboard:
+    if not dashboard or "totals" not in dashboard or "source_cards" not in dashboard:
         print("No data found for the specified date range.", file=sys.stderr)
         return
     totals = dashboard["totals"]
@@ -142,7 +142,10 @@ def print_summary(dashboard: dict[str, Any]) -> None:
 
 def _positive_int(value: str) -> int:
     """Validate that --days is a positive integer <= 3650."""
-    v = int(value)
+    try:
+        v = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a valid integer, got '{value}'")
     if v <= 0:
         raise argparse.ArgumentTypeError(f"must be positive, got {v}")
     if v > 3650:
@@ -294,6 +297,25 @@ def main() -> None:
     if "--version" in sys.argv[1:] or "-V" in sys.argv[1:]:
         parser.parse_args(["--version"])
 
+    # Legacy: `agent-usage-atlas --serve` → delegate to serve command.
+    # Must be checked BEFORE subcommand injection so that `--serve` is parsed
+    # at the top level rather than being incorrectly forwarded to the `generate`
+    # subparser (which doesn't know about it) and causing an "unrecognized
+    # arguments" error.
+    if "--serve" in sys.argv[1:]:
+        args = parser.parse_args(sys.argv[1:])
+        from .server import run_server
+
+        run_server(
+            host=args.host,
+            port=args.port,
+            days=getattr(args, "days", 30),
+            since=getattr(args, "since", None),
+            interval=args.interval,
+            open_browser=getattr(args, "open_browser", False),
+        )
+        return
+
     # If no subcommand given, insert "generate" as default
     # Check sys.argv: if first non-flag arg isn't a known subcommand, prepend "generate"
     argv = sys.argv[1:]
@@ -301,20 +323,6 @@ def main() -> None:
         argv = ["generate"] + argv
 
     args = parser.parse_args(argv)
-
-    # Legacy: `agent-usage-atlas --serve` → delegate to serve command
-    if args.serve:
-        from .server import run_server
-
-        run_server(
-            host=args.host,
-            port=args.port,
-            days=args.days,
-            since=args.since,
-            interval=args.interval,
-            open_browser=args.open_browser,
-        )
-        return
 
     # Dispatch to subcommand
     if hasattr(args, "func"):

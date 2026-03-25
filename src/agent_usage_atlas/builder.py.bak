@@ -36,9 +36,9 @@ def _assemble_template() -> str:
 
     # Guard against placeholder collisions in CSS source
     # (__DATA__ and __POLL_MS__ intentionally appear in JS as substitution targets)
-    for _placeholder in ("__DATA__", "__POLL_MS__", "__LIVE_MODE__"):
-        if _placeholder in css:
-            raise ValueError(f"CSS must not contain {_placeholder} placeholder")
+    assert "__DATA__" not in css, "CSS must not contain __DATA__ placeholder"
+    assert "__POLL_MS__" not in css, "CSS must not contain __POLL_MS__ placeholder"
+    assert "__LIVE_MODE__" not in css, "CSS must not contain __LIVE_MODE__ placeholder"
 
     return html_skeleton.replace("__CSS__", css).replace("__JS__", js)
 
@@ -60,8 +60,7 @@ def build_html(data: dict | None = None, *, poll_interval_ms: int = 0, live: boo
 
     # Precompute replacement values
     payload = "null" if data is None else json.dumps(data, ensure_ascii=False).replace("</", r"<\/")
-    _ms = int(poll_interval_ms or 0)
-    interval = str(max(1000, _ms) if _ms > 0 else 0)
+    interval = str(max(1000, int(poll_interval_ms or 0)))
     live_flag = "true" if live else "false"
     replacements = {"__DATA__": payload, "__POLL_MS__": interval, "__LIVE_MODE__": live_flag}
 
